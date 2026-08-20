@@ -38,12 +38,19 @@ export const SearchableLanguageSelect: React.FC<SearchableLanguageSelectProps> =
 
   const selectedLangObj = SUPPORTED_LANGUAGES.find((l) => l.code === value);
 
+  const getLangName = (lang: (typeof SUPPORTED_LANGUAGES)[0]) => {
+    if (uiLang === 'ar') return lang.nameAr || lang.nameEn;
+    if (uiLang === 'en') return lang.nameEn;
+    return lang.nameFa;
+  };
+
   const filteredLanguages = SUPPORTED_LANGUAGES.filter((lang) => {
     const query = searchQuery.toLowerCase().trim();
     if (!query) return true;
     return (
       lang.nameFa.toLowerCase().includes(query) ||
       lang.nameEn.toLowerCase().includes(query) ||
+      (lang.nameAr && lang.nameAr.toLowerCase().includes(query)) ||
       lang.code.toLowerCase().includes(query)
     );
   });
@@ -74,7 +81,7 @@ export const SearchableLanguageSelect: React.FC<SearchableLanguageSelectProps> =
           ) : selectedLangObj ? (
             <span className="flex items-center gap-2 font-medium">
               <span className="text-base">{selectedLangObj.flag}</span>
-              <span>{uiLang === 'en' ? selectedLangObj.nameEn : selectedLangObj.nameFa}</span>
+              <span>{getLangName(selectedLangObj)}</span>
             </span>
           ) : (
             <span>{value}</span>
@@ -90,14 +97,14 @@ export const SearchableLanguageSelect: React.FC<SearchableLanguageSelectProps> =
           {/* Search Box */}
           <div className="p-2 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/80 sticky top-0">
             <div className="relative">
-              <Search className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2" />
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute start-3 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder={t.searchLanguagePlaceholder}
                 autoFocus
-                className="w-full bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-800 text-slate-900 dark:text-slate-200 rounded-lg pr-9 pl-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 placeholder:text-slate-400 dark:placeholder:text-slate-500"
+                className="w-full bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-800 text-slate-900 dark:text-slate-200 rounded-lg ps-9 pe-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 placeholder:text-slate-400 dark:placeholder:text-slate-500"
               />
             </div>
           </div>
@@ -111,7 +118,7 @@ export const SearchableLanguageSelect: React.FC<SearchableLanguageSelectProps> =
                   onChange('auto');
                   setIsOpen(false);
                 }}
-                className={`w-full text-right px-3 py-2 rounded-lg text-xs flex items-center justify-between transition-colors ${
+                className={`w-full text-start px-3 py-2 rounded-lg text-xs flex items-center justify-between transition-colors ${
                   value === 'auto'
                     ? 'bg-indigo-50 dark:bg-indigo-600/20 text-indigo-700 dark:text-indigo-300 font-bold'
                     : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/80'
@@ -126,7 +133,7 @@ export const SearchableLanguageSelect: React.FC<SearchableLanguageSelectProps> =
             )}
 
             {filteredLanguages.length === 0 ? (
-              <div className="p-4 text-center text-xs text-slate-500 font-['Vazirmatn']">
+              <div className="p-4 text-center text-xs text-slate-500">
                 {t.noLanguageFound}
               </div>
             ) : (
@@ -141,7 +148,7 @@ export const SearchableLanguageSelect: React.FC<SearchableLanguageSelectProps> =
                       setIsOpen(false);
                       setSearchQuery('');
                     }}
-                    className={`w-full text-right px-3 py-2 rounded-lg text-xs flex items-center justify-between transition-colors ${
+                    className={`w-full text-start px-3 py-2 rounded-lg text-xs flex items-center justify-between transition-colors ${
                       isSelected
                         ? 'bg-indigo-50 dark:bg-indigo-600/20 text-indigo-700 dark:text-indigo-300 font-bold'
                         : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/80'
@@ -149,7 +156,7 @@ export const SearchableLanguageSelect: React.FC<SearchableLanguageSelectProps> =
                   >
                     <span className="flex items-center gap-2.5">
                       <span className="text-base">{lang.flag}</span>
-                      <span>{uiLang === 'en' ? lang.nameEn : lang.nameFa}</span>
+                      <span>{getLangName(lang)}</span>
                     </span>
                     {isSelected && <Check className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />}
                   </button>

@@ -9,7 +9,8 @@ import {
   ToneOption, 
   ToastMessage,
   BilingualConfig,
-  BatchSizeOption
+  BatchSizeOption,
+  AIModelId
 } from './types';
 import { 
   parseSubtitleFile, 
@@ -163,7 +164,7 @@ export default function App() {
   const [batchSize, setBatchSize] = useState<BatchSizeOption>(35);
   const [skipCodeOnly, setSkipCodeOnly] = useState<boolean>(true);
   const [appendRTLMarkers, setAppendRTLMarkers] = useState<boolean>(true);
-
+  const [selectedModel, setSelectedModel] = useState<AIModelId>('gemini-3.6-flash');
 
   // Translation execution state
   const [isTranslating, setIsTranslating] = useState<boolean>(false);
@@ -511,7 +512,170 @@ export default function App() {
     showToast(`${count} ${t.emptyLinesFilled}`, 'info');
   };
 
-  // Start Batch Translation Process
+  // Live Real-Time Streaming Translation Handler
+  const translateWithLiveStream = async () => {
+    const isRTL = RTL_LANGUAGES.includes(targetLanguage);
+    const STREAM_CHUNK_SIZE = Math.min(batchSize || 35, 30);
+    const totalCount = items.length;
+    const totalBatchesCount = Math.ceil(totalCount / STREAM_CHUNK_SIZE);
+
+    setTotalBatches(totalBatchesCount);
+    setCurrentBatch(0);
+    setTranslatedCount(0);
+
+    for (let b = 0; b < totalBatchesCount; b++) {
+      if (cancelTranslationRef.current) break;
+
+      while (isPausedRef.current) {
+        if (cancelTranslationRef.current) break;
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+
+      if (cancelTranslationRef.current) break;
+
+      setCurrentBatch(b + 1);
+      const startIndex = b * STREAM_CHUNK_SIZE;
+      const batchSlice = items.slice(startIndex, startIndex + STREAM_CHUNK_SIZE);
+
+      // Handle skippable items
+      const itemsToStream: typeof batchSlice = [];
+      const autoFilled: Array<{ id: number; text: string }> = [];
+
+      batchSlice.forEach((item) => {
+        if (skipCodeOnly && isCodeOnlyOrSkippable(item.originalText)) {
+          autoFilled.push({ id: item.id, text: item.originalText });
+        } else {
+          itemsToStream.push(item);
+        }
+      });
+
+      if (autoFilled.length > 0) {
+        setItems((prevItems) => {
+          const updated = [...prevItems];
+          autoFilled.forEach((af) => {
+            const idx = updated.findIndex((i) => i.id === af.id);
+            if (idx !== -1) {
+              updated[idx] = { ...updated[idx], translatedText: af.text };
+            }
+          });
+          return updated;
+        });
+      }
+
+      if (itemsToStream.length === 0) {
+        setTranslatedCount((prev) => prev + batchSlice.length);
+        continue;
+      }
+
+      try {
+        const response = await fetch('/api/translate-stream', {
+          method: 'POST',
+          headers: getApiHeaders(),
+          body: JSON.stringify({
+            items: itemsToStream.map((i) => ({
+              id: i.id,
+              text: i.originalText,
+              key: i.gameKey,
+              context: i.context,
+            })),
+            sourceLanguage: sourceLanguage === 'auto' ? undefined : sourceLanguage,
+            targetLanguage,
+            tone: selectedTone,
+            customPrompt,
+            mode,
+            model: selectedModel,
+          }),
+        });
+
+        if (!response.ok || !response.body) {
+          throw new Error(`Streaming failed with HTTP status ${response.status}`);
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let buffer = '';
+
+        while (true) {
+          if (cancelTranslationRef.current) {
+            reader.cancel();
+            break;
+          }
+
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const events = buffer.split('\n\n');
+          buffer = events.pop() || '';
+
+          for (const ev of events) {
+            if (!ev.trim()) continue;
+            const lines = ev.split('\n');
+            let eventType = 'message';
+            let eventData = '';
+
+            for (const line of lines) {
+              if (line.startsWith('event:')) {
+                eventType = line.replace('event:', '').trim();
+              } else if (line.startsWith('data:')) {
+                eventData = line.replace('data:', '').trim();
+              }
+            }
+
+            if (!eventData) continue;
+
+            try {
+              const parsed = JSON.parse(eventData);
+
+              if (eventType === 'line_translated' && parsed.id && parsed.text !== undefined) {
+                setItems((prevItems) => {
+                  const updated = [...prevItems];
+                  const targetIndex = updated.findIndex((i) => i.id === parsed.id);
+                  if (targetIndex !== -1) {
+                    let finalText = isRTL ? fixRTLPunctuation(parsed.text) : parsed.text;
+                    if (isRTL && appendRTLMarkers) {
+                      finalText = appendHiddenRTLMarker(finalText);
+                    }
+                    updated[targetIndex] = {
+                      ...updated[targetIndex],
+                      translatedText: finalText,
+                    };
+                  }
+                  return updated;
+                });
+                setTranslatedCount((prev) => Math.min(prev + 1, totalCount));
+              } else if (eventType === 'status' && parsed.status === 'key_failover') {
+                showToast(
+                  uiLang === 'en'
+                    ? `Live Stream: API Quota limit reached, switching automatically to Key #${parsed.nextKeyIndex}...`
+                    : `پخش زنده: سقف کلید جاری پر شد، سوئیچ خودکار به کلید #${parsed.nextKeyIndex}...`,
+                  'warning'
+                );
+              } else if (eventType === 'error') {
+                showToast(parsed.error || 'Live Streaming Error', 'error');
+              }
+            } catch (jsonErr) {
+              console.warn('Could not parse SSE event:', jsonErr);
+            }
+          }
+        }
+      } catch (streamErr: any) {
+        console.error('Live streaming network/parse error:', streamErr);
+        showToast(streamErr?.message || 'Error in live streaming translation', 'error');
+      }
+
+      // Small throttle between stream blocks
+      await new Promise((resolve) => setTimeout(resolve, 600));
+    }
+
+    setIsTranslating(false);
+
+    if (!cancelTranslationRef.current) {
+      showToast(t.translationFinished, 'success');
+    }
+  };
+
+  // Start Batch or Live Streaming Translation Process
   const handleStartTranslation = async () => {
     if (items.length === 0) {
       showToast(t.noSubtitlesToTranslate, 'warning');
@@ -521,6 +685,12 @@ export default function App() {
     setIsTranslating(true);
     setIsPaused(false);
     cancelTranslationRef.current = false;
+
+    // If live streaming model is selected, use real-time stream engine
+    if (selectedModel === 'gemini-live-stream') {
+      await translateWithLiveStream();
+      return;
+    }
 
     const BATCH_SIZE = batchSize || 35;
     const totalCount = items.length;
@@ -619,6 +789,7 @@ export default function App() {
               tone: selectedTone,
               customPrompt,
               mode,
+              model: selectedModel,
             }),
           });
 
@@ -957,6 +1128,8 @@ export default function App() {
           setSkipCodeOnly={setSkipCodeOnly}
           appendRTLMarkers={appendRTLMarkers}
           setAppendRTLMarkers={setAppendRTLMarkers}
+          selectedModel={selectedModel}
+          setSelectedModel={setSelectedModel}
         />
 
         {/* Translation Progress Bar (Shows when translating) */}
@@ -1016,7 +1189,7 @@ export default function App() {
       </main>
 
       {/* Footer */}
-      <footer className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 mt-8 border-t border-slate-200 dark:border-slate-800/80 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-500 dark:text-slate-400">
+      <footer className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 mt-8 border-t border-slate-200 dark:border-slate-800/80 flex flex-col md:flex-row items-center justify-between gap-4 text-xs text-slate-500 dark:text-slate-400">
         <div className="flex items-center gap-3">
           <div className="w-7 h-7 rounded-lg overflow-hidden border border-indigo-500/30 p-0.5 shrink-0 shadow-sm">
             <img
@@ -1026,10 +1199,15 @@ export default function App() {
               className="w-full h-full object-cover rounded-md"
             />
           </div>
-          <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
-            <span className="font-bold text-slate-800 dark:text-slate-200">SubGame Lab</span>
-            <span className="hidden sm:inline text-slate-300 dark:text-slate-700">•</span>
-            <span>Next-Gen Subtitle & Game Localization Engine</span>
+          <div className="flex flex-col gap-0.5">
+            <div className="flex items-center gap-2">
+              <span className="font-bold text-slate-800 dark:text-slate-200">SubGame Lab</span>
+              <span className="text-slate-300 dark:text-slate-700">•</span>
+              <span className="text-[11px] text-slate-400 dark:text-slate-500">Next-Gen Subtitle & Game Localization</span>
+            </div>
+            <p className="text-[11px] text-slate-600 dark:text-slate-400 font-medium">
+              {t.copyrightText}
+            </p>
           </div>
         </div>
 
@@ -1058,7 +1236,7 @@ export default function App() {
 
           <div className="flex items-center gap-1 text-[11px] text-slate-400 dark:text-slate-500">
             <Sparkles className="w-3 h-3 text-indigo-500" />
-            <span>Gemini 3.6 Flash</span>
+            <span>Gemini AI Engine</span>
           </div>
         </div>
       </footer>

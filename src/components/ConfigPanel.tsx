@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { SubtitleFormat, GameFormat, ToneOption, AppMode, GameColumnMapping, BatchSizeOption } from '../types';
-import { TONE_OPTIONS } from '../constants';
+import { SubtitleFormat, GameFormat, ToneOption, AppMode, GameColumnMapping, BatchSizeOption, AIModelId } from '../types';
+import { TONE_OPTIONS, AI_MODELS } from '../constants';
 import { UILanguage, TRANSLATIONS } from '../lib/i18n';
 import { SearchableLanguageSelect } from './SearchableLanguageSelect';
+import { ModelGuideModal } from './ModelGuideModal';
 import { 
   Languages, 
   Sparkles, 
@@ -26,7 +27,11 @@ import {
   Square,
   ChevronDown,
   ChevronUp,
-  Zap
+  Zap,
+  Radio,
+  BrainCircuit,
+  Flame,
+  HelpCircle
 } from 'lucide-react';
 
 interface ConfigPanelProps {
@@ -48,6 +53,9 @@ interface ConfigPanelProps {
   uiLang: UILanguage;
   onOpenBilingualModal?: () => void;
   isBilingualActive?: boolean;
+  // Active AI Model selector & guide
+  selectedModel?: AIModelId;
+  setSelectedModel?: (model: AIModelId) => void;
   // Game mode column mapping props
   gameColumns?: string[];
   gameMapping?: GameColumnMapping;
@@ -81,6 +89,8 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = ({
   uiLang,
   onOpenBilingualModal,
   isBilingualActive = false,
+  selectedModel = 'gemini-3.6-flash',
+  setSelectedModel,
   gameColumns,
   gameMapping,
   setGameMapping,
@@ -94,8 +104,25 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = ({
 }) => {
   const t = TRANSLATIONS[uiLang];
   const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
+  const [isGuideOpen, setIsGuideOpen] = useState(false);
 
   const isGameMode = mode === 'game';
+
+  const getModelIcon = (id?: string) => {
+    switch (id) {
+      case 'gemini-live-stream':
+        return <Radio className="w-4 h-4 text-rose-500 animate-pulse" />;
+      case 'gemini-3.1-pro':
+        return <BrainCircuit className="w-4 h-4 text-purple-500" />;
+      case 'gemini-2.5-pro':
+        return <Sparkles className="w-4 h-4 text-indigo-500" />;
+      case 'gemini-2.5-flash':
+        return <Flame className="w-4 h-4 text-blue-500" />;
+      case 'gemini-3.6-flash':
+      default:
+        return <Zap className="w-4 h-4 text-emerald-500" />;
+    }
+  };
 
 
   const getToneIcon = (iconName: string) => {
@@ -200,6 +227,52 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = ({
           </button>
         )}
       </div>
+
+      {/* AI Model Selector Dropdown & Interactive Model Guide */}
+      {setSelectedModel && (
+        <div className="bg-slate-50/80 dark:bg-slate-950/60 p-3 rounded-xl border border-slate-200/90 dark:border-slate-800/90 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+              <Zap className="w-3.5 h-3.5 text-indigo-500" />
+              <span>{t.aiModelSelector}</span>
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2 flex-1 sm:justify-end">
+            {/* Model Dropdown */}
+            <div className="relative flex-1 sm:flex-initial sm:min-w-[280px]">
+              <div className="absolute inset-y-0 start-0 ps-2.5 flex items-center pointer-events-none">
+                {getModelIcon(selectedModel)}
+              </div>
+              <select
+                value={selectedModel}
+                onChange={(e) => setSelectedModel(e.target.value as AIModelId)}
+                className="w-full text-xs font-semibold ps-8 pe-8 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 appearance-none cursor-pointer transition-all shadow-sm"
+              >
+                {AI_MODELS.map((m) => (
+                  <option key={m.id} value={m.id} className="py-1">
+                    {m.name} — {m.badge}
+                  </option>
+                ))}
+              </select>
+              <div className="absolute inset-y-0 end-0 pe-2.5 flex items-center pointer-events-none text-slate-400">
+                <ChevronDown className="w-3.5 h-3.5" />
+              </div>
+            </div>
+
+            {/* Model Guide Info Button */}
+            <button
+              type="button"
+              onClick={() => setIsGuideOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/50 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 transition-all shadow-sm active:scale-95 shrink-0"
+              title={t.modelGuideTitle}
+            >
+              <HelpCircle className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+              <span className="hidden xs:inline sm:inline">{t.aiModelGuide}</span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Language Selection Row */}
       <div className="grid grid-cols-1 md:grid-cols-[1fr_auto_1fr] items-end gap-3">
@@ -424,127 +497,119 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = ({
         </div>
       )}
 
-      {/* Advanced Performance & Localization Options Accordion */}
-      <div className={`rounded-xl border transition-all duration-300 overflow-hidden ${
-        isGameMode
-          ? 'bg-purple-950/10 dark:bg-purple-950/20 border-purple-500/20 dark:border-purple-500/30'
-          : 'bg-blue-950/10 dark:bg-blue-950/20 border-blue-500/20 dark:border-blue-500/30'
-      }`}>
-        <button
-          type="button"
-          onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
-          className="w-full flex items-center justify-between p-3.5 text-xs font-bold transition-colors hover:bg-black/5 dark:hover:bg-white/5"
-        >
-          <div className="flex items-center gap-2">
-            <Cpu className={`w-4 h-4 ${isGameMode ? 'text-purple-600 dark:text-purple-400' : 'text-blue-600 dark:text-blue-400'}`} />
-            <span className="text-slate-900 dark:text-white">
-              {t.advancedGameOptions}
-            </span>
-            <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${
-              isGameMode
-                ? 'bg-purple-500/10 text-purple-600 dark:text-purple-300 border border-purple-500/20'
-                : 'bg-blue-500/10 text-blue-600 dark:text-blue-300 border border-blue-500/20'
-            }`}>
-              Batch: {batchSize} | {skipCodeOnly ? 'Auto-Skip ON' : 'Auto-Skip OFF'}
-            </span>
-          </div>
+      {/* Advanced Performance & Localization Options Accordion - ONLY shown in Game Mode as requested */}
+      {isGameMode && (
+        <div className="rounded-xl border transition-all duration-300 overflow-hidden bg-purple-950/10 dark:bg-purple-950/20 border-purple-500/20 dark:border-purple-500/30">
+          <button
+            type="button"
+            onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
+            className="w-full flex items-center justify-between p-3.5 text-xs font-bold transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+          >
+            <div className="flex items-center gap-2">
+              <Cpu className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+              <span className="text-slate-900 dark:text-white">
+                {t.advancedGameOptions}
+              </span>
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-600 dark:text-purple-300 border border-purple-500/20">
+                Batch: {batchSize} | {skipCodeOnly ? 'Auto-Skip ON' : 'Auto-Skip OFF'}
+              </span>
+            </div>
 
-          <div className="flex items-center gap-1 text-slate-500">
-            <span className="text-[11px] font-normal hidden sm:inline">
-              {showAdvancedSettings ? (uiLang === 'en' ? 'Collapse' : 'بستن') : (uiLang === 'en' ? 'Expand settings' : 'نمایش تنظیمات')}
-            </span>
-            {showAdvancedSettings ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-          </div>
-        </button>
+            <div className="flex items-center gap-1 text-slate-500">
+              <span className="text-[11px] font-normal hidden sm:inline">
+                {showAdvancedSettings ? (uiLang === 'en' ? 'Collapse' : uiLang === 'ar' ? 'طي' : 'بستن') : (uiLang === 'en' ? 'Expand settings' : uiLang === 'ar' ? 'عرض الإعدادات' : 'نمایش تنظیمات')}
+              </span>
+              {showAdvancedSettings ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+            </div>
+          </button>
 
-        {showAdvancedSettings && (
-          <div className="p-4 pt-2 border-t border-slate-200/60 dark:border-slate-800/80 flex flex-col gap-4">
-            
-            {/* Batch Size Selector */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-              <div>
-                <label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                  <Zap className="w-3.5 h-3.5 text-amber-500" />
-                  <span>{t.batchSize}</span>
-                </label>
-                <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                  {t.batchSizeDesc}
-                </p>
-              </div>
+          {showAdvancedSettings && (
+            <div className="p-4 pt-2 border-t border-slate-200/60 dark:border-slate-800/80 flex flex-col gap-4">
+              
+              {/* Batch Size Selector */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                    <Zap className="w-3.5 h-3.5 text-amber-500" />
+                    <span>{t.batchSize}</span>
+                  </label>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    {t.batchSizeDesc}
+                  </p>
+                </div>
 
-              <div className="flex items-center gap-1 bg-white dark:bg-slate-900 p-1 rounded-xl border border-slate-300 dark:border-slate-800 shrink-0">
-                {([25, 35, 50, 100] as BatchSizeOption[]).map((size) => (
-                  <button
-                    key={size}
-                    type="button"
-                    onClick={() => setBatchSize && setBatchSize(size)}
-                    className={`px-3 py-1 text-xs font-mono font-bold rounded-lg transition-all ${
-                      batchSize === size
-                        ? isGameMode
+                <div className="flex items-center gap-1 bg-white dark:bg-slate-900 p-1 rounded-xl border border-slate-300 dark:border-slate-800 shrink-0">
+                  {([25, 35, 50, 100] as BatchSizeOption[]).map((size) => (
+                    <button
+                      key={size}
+                      type="button"
+                      onClick={() => setBatchSize && setBatchSize(size)}
+                      className={`px-3 py-1 text-xs font-mono font-bold rounded-lg transition-all ${
+                        batchSize === size
                           ? 'bg-purple-600 text-white shadow-sm'
-                          : 'bg-blue-600 text-white shadow-sm'
-                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800'
-                    }`}
-                  >
-                    {size}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Skip Code-Only / Non-Text Rows Toggle */}
-            <div className="flex items-start sm:items-center justify-between gap-3 p-2.5 rounded-lg bg-white/60 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800/60">
-              <div>
-                <div className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                  <FileCode2 className="w-3.5 h-3.5 text-emerald-500" />
-                  <span>{t.skipCodeOnly}</span>
+                          : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800'
+                      }`}
+                    >
+                      {size}
+                    </button>
+                  ))}
                 </div>
-                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                  {t.skipCodeOnlyDesc}
-                </p>
               </div>
 
-              <button
-                type="button"
-                onClick={() => setSkipCodeOnly && setSkipCodeOnly(!skipCodeOnly)}
-                className={`p-1.5 rounded-lg border transition-all shrink-0 ${
-                  skipCodeOnly
-                    ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border-emerald-500/40'
-                    : 'bg-slate-100 dark:bg-slate-800 text-slate-400 border-slate-300 dark:border-slate-700'
-                }`}
-              >
-                {skipCodeOnly ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
-              </button>
-            </div>
-
-            {/* Append Hidden RTL Markers (\u200f) Toggle */}
-            <div className="flex items-start sm:items-center justify-between gap-3 p-2.5 rounded-lg bg-white/60 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800/60">
-              <div>
-                <div className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                  <Languages className="w-3.5 h-3.5 text-indigo-500" />
-                  <span>{t.appendRTLMarkers}</span>
+              {/* Game-specific: Skip Code-Only / Non-Text Rows Toggle */}
+              <div className="flex items-start sm:items-center justify-between gap-3 p-2.5 rounded-lg bg-white/60 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800/60">
+                <div>
+                  <div className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                    <FileCode2 className="w-3.5 h-3.5 text-emerald-500" />
+                    <span>{t.skipCodeOnly}</span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                    {t.skipCodeOnlyDesc}
+                  </p>
                 </div>
-                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                  {t.appendRTLMarkersDesc}
-                </p>
+
+                <button
+                  type="button"
+                  onClick={() => setSkipCodeOnly && setSkipCodeOnly(!skipCodeOnly)}
+                  className={`p-1.5 rounded-lg border transition-all shrink-0 ${
+                    skipCodeOnly
+                      ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border-emerald-500/40'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-400 border-slate-300 dark:border-slate-700'
+                  }`}
+                >
+                  {skipCodeOnly ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
+                </button>
               </div>
 
-              <button
-                type="button"
-                onClick={() => setAppendRTLMarkers && setAppendRTLMarkers(!appendRTLMarkers)}
-                className={`p-1.5 rounded-lg border transition-all shrink-0 ${
-                  appendRTLMarkers
-                    ? 'bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 border-indigo-500/40'
-                    : 'bg-slate-100 dark:bg-slate-800 text-slate-400 border-slate-300 dark:border-slate-700'
-                }`}
-              >
-                {appendRTLMarkers ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
-              </button>
-            </div>
+              {/* Append Hidden RTL Markers (\u200f) Toggle */}
+              <div className="flex items-start sm:items-center justify-between gap-3 p-2.5 rounded-lg bg-white/60 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800/60">
+                <div>
+                  <div className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                    <Languages className="w-3.5 h-3.5 text-indigo-500" />
+                    <span>{t.appendRTLMarkers}</span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                    {t.appendRTLMarkersDesc}
+                  </p>
+                </div>
 
-          </div>
-        )}
-      </div>
+                <button
+                  type="button"
+                  onClick={() => setAppendRTLMarkers && setAppendRTLMarkers(!appendRTLMarkers)}
+                  className={`p-1.5 rounded-lg border transition-all shrink-0 ${
+                    appendRTLMarkers
+                      ? 'bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 border-indigo-500/40'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-400 border-slate-300 dark:border-slate-700'
+                  }`}
+                >
+                  {appendRTLMarkers ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
+                </button>
+              </div>
+
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Target Export Format & Start Action */}
       <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-4 border-t border-slate-200 dark:border-slate-800">
@@ -606,6 +671,16 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = ({
         </button>
       </div>
 
+      {/* Model Selection Guide Modal */}
+      {setSelectedModel && (
+        <ModelGuideModal
+          isOpen={isGuideOpen}
+          onClose={() => setIsGuideOpen(false)}
+          uiLang={uiLang}
+          selectedModel={selectedModel}
+          onSelectModel={setSelectedModel}
+        />
+      )}
     </div>
   );
 };

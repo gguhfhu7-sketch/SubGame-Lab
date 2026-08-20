@@ -163,6 +163,20 @@ export interface Translations {
   exitFullscreen: string;
   virtualizedStats: string;
   advancedGameOptions: string;
+  advancedSubtitleOptions: string;
+  aiModelSelector: string;
+  aiModelGuide: string;
+  modelGuideTitle: string;
+  modelGuideDesc: string;
+  modelLiveBadge: string;
+  streamingLive: string;
+  downloadGameFiles: string;
+  modeMovie: string;
+  modeMovieTitle: string;
+  modeGameTitle: string;
+  modeCinemaShort: string;
+  modeGameShort: string;
+  copyrightText: string;
 }
 
 export const TRANSLATIONS: Record<UILanguage, Translations> = {
@@ -329,6 +343,20 @@ export const TRANSLATIONS: Record<UILanguage, Translations> = {
     exitFullscreen: 'خروج از تمام‌صفحه',
     virtualizedStats: 'رندرینگ فوق‌سریع مجازی (DOM Virtualization فعال است)',
     advancedGameOptions: 'تنظیمات پیشرفته موتور بازی',
+    advancedSubtitleOptions: 'تنظیمات پیشرفته ترجمه زیرنویس',
+    aiModelSelector: 'مدل هوش مصنوعی:',
+    aiModelGuide: 'راهنمای مدل‌ها',
+    modelGuideTitle: 'راهنمای جامع انتخاب مدل‌های هوش مصنوعی',
+    modelGuideDesc: 'توضیحات و کاربرد بهینه هر یک از مدل‌های Gemini برای ترجمه زیرنویس و اسکریپت‌های بازی.',
+    modelLiveBadge: 'پخش زنده آنی (Live Stream)',
+    streamingLive: 'در حال دریافت زنده و جریانی ترجمه...',
+    downloadGameFiles: 'دانلود فایل‌های بومی‌سازی بازی',
+    modeMovie: 'فیلم و ویدیو',
+    modeMovieTitle: 'حالت ترجمه زیرنویس فیلم و سریال',
+    modeGameTitle: 'حالت ترجمه و محلی‌سازی بازی',
+    modeCinemaShort: 'فیلم',
+    modeGameShort: 'بازی',
+    copyrightText: 'ساخته شده توسط سعید صفاری © تمامی حقوق محفوظ است',
   },
   en: {
     appTitle: 'SubGame Lab',
@@ -493,6 +521,20 @@ export const TRANSLATIONS: Record<UILanguage, Translations> = {
     exitFullscreen: 'Exit Full-Screen',
     virtualizedStats: 'Ultra-Fast DOM Virtualization (Active)',
     advancedGameOptions: 'Advanced Game Localization Settings',
+    advancedSubtitleOptions: 'Advanced Subtitle Settings',
+    aiModelSelector: 'AI Translation Model:',
+    aiModelGuide: 'Model Guide',
+    modelGuideTitle: 'AI Models Guide & Selection',
+    modelGuideDesc: 'Detailed recommendations for choosing the best Gemini model for your subtitle or game files.',
+    modelLiveBadge: 'Live Streaming',
+    streamingLive: 'Receiving live stream translation...',
+    downloadGameFiles: 'Download Game Localization Files',
+    modeMovie: 'Movies & Video',
+    modeMovieTitle: 'Movie & Subtitle Translation Mode',
+    modeGameTitle: 'Game Localization Mode',
+    modeCinemaShort: 'Cinema',
+    modeGameShort: 'Game',
+    copyrightText: 'Created by Saeed Saffari © All rights reserved',
   },
   ar: {
     appTitle: 'SubGame Lab',
@@ -657,5 +699,19 @@ export const TRANSLATIONS: Record<UILanguage, Translations> = {
     exitFullscreen: 'الخروج من ملء الشاشة',
     virtualizedStats: 'عرض افتراضي فائق السرعة (DOM Virtualization مفعّل)',
     advancedGameOptions: 'إعدادات متقدمة لمحرك الألعاب',
+    advancedSubtitleOptions: 'إعدادات متقدمة لترجمة النصوص والأفلام',
+    aiModelSelector: 'نموذج الذكاء الاصطناعي:',
+    aiModelGuide: 'دليل النماذج',
+    modelGuideTitle: 'دليل اختيار نماذج الذكاء الاصطناعي',
+    modelGuideDesc: 'توصيات تفصيلية لاختيار أفضل نموذج Gemini لملفات الترجمة أو الألعاب الخاصة بك.',
+    modelLiveBadge: 'البث المباشر الفوري',
+    streamingLive: 'جاري استلام البث المباشر للترجمة...',
+    downloadGameFiles: 'تحميل ملفات تعريب اللعبة',
+    modeMovie: 'أفلام وفيديو',
+    modeMovieTitle: 'وضع ترجمة الأفلام والمسلسلات',
+    modeGameTitle: 'وضع تعريب وترجمة الألعاب',
+    modeCinemaShort: 'أفلام',
+    modeGameShort: 'ألعاب',
+    copyrightText: 'تم التطوير بواسطة سعيد صفاري © جميع الحقوق محفوظة',
   },
 };

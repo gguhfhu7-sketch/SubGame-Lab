@@ -156,9 +156,17 @@ export const SubtitleRowItem = React.memo<SubtitleRowItemProps>(({
                 <Edit3 className="w-2.5 h-2.5" />
                 <span>{t.translatedTextLabel}:</span>
               </span>
-              {item.translatedText.trim() && (
-                <span className="text-[9px] font-mono text-emerald-600 dark:text-emerald-400/80 font-bold">{t.completedLine}</span>
-              )}
+              <div className="flex items-center gap-1.5">
+                {isTranslatingThisLine && (
+                  <span className="text-[9px] font-bold text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/60 px-1.5 py-0.5 rounded border border-rose-200 dark:border-rose-800 flex items-center gap-1 animate-pulse">
+                    <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping" />
+                    <span>Live</span>
+                  </span>
+                )}
+                {item.translatedText.trim() && (
+                  <span className="text-[9px] font-mono text-emerald-600 dark:text-emerald-400/80 font-bold">{t.completedLine}</span>
+                )}
+              </div>
             </div>
             <textarea
               rows={2}

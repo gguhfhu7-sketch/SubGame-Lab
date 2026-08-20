@@ -4,6 +4,26 @@
 
 export type AppMode = 'cinema' | 'game';
 
+export type TranslationMethod = 'batch' | 'stream';
+
+export type AIModelId = 
+  | 'gemini-3.6-flash'
+  | 'gemini-live-stream'
+  | 'gemini-3.1-pro'
+  | 'gemini-2.5-pro'
+  | 'gemini-2.5-flash';
+
+export interface AIModelOption {
+  id: AIModelId;
+  name: string;
+  badge: string;
+  badgeColor: string;
+  descriptionFa: string;
+  descriptionEn: string;
+  descriptionAr: string;
+  isStreaming?: boolean;
+}
+
 export type SubtitleFormat = 'srt' | 'vtt' | 'ass' | 'ssa' | 'sub';
 export type GameFormat = 'csv' | 'json' | 'txt' | 'xlsx';
 
@@ -28,6 +48,7 @@ export interface LanguageOption {
   code: string;
   nameFa: string;
   nameEn: string;
+  nameAr?: string;
   flag: string;
 }
 

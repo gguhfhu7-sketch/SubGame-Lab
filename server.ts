@@ -94,7 +94,8 @@ async function callGeminiWithRetryAndFallback(
   generateParams: {
     contents: any;
     config?: any;
-  }
+  },
+  preferredModel?: string
 ) {
   const rawKeys = apiKeys.length > 0 ? apiKeys : [];
   const keysToTry: string[] = [];
@@ -116,7 +117,19 @@ async function callGeminiWithRetryAndFallback(
     throw new Error('کلید API جمینای تنظیم نشده است. لطفاً کلید API خود را وارد کنید.');
   }
 
-  const models = ['gemini-3.6-flash', 'gemini-2.5-flash'];
+  // Base fallback models list
+  const defaultModels = ['gemini-3.6-flash', 'gemini-3.1-pro', 'gemini-2.5-pro', 'gemini-2.5-flash'];
+  const models: string[] = [];
+
+  if (preferredModel && preferredModel !== 'gemini-live-stream') {
+    models.push(preferredModel);
+  }
+  defaultModels.forEach((m) => {
+    if (!models.includes(m)) {
+      models.push(m);
+    }
+  });
+
   let lastError: any = null;
 
   for (let kIdx = 0; kIdx < keysToTry.length; kIdx++) {
@@ -197,7 +210,7 @@ async function callGeminiWithRetryAndFallback(
 // API Endpoint: Translate batch of subtitle or game localization items
 app.post('/api/translate', async (req, res) => {
   try {
-    const { items, sourceLanguage, targetLanguage, tone, customPrompt, mode } = req.body;
+    const { items, sourceLanguage, targetLanguage, tone, customPrompt, mode, model } = req.body;
 
     if (!items || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: 'آیتمی برای ترجمه ارسال نشده است.' });
@@ -292,7 +305,7 @@ ${mode === 'game' ? 'Operational Mode: Video Game Localization Engine (Dialogue,
           required: ['translations']
         }
       }
-    });
+    }, model);
 
     const responseText = response.text || '{}';
     let parsedData;
@@ -318,6 +331,217 @@ ${mode === 'game' ? 'Operational Mode: Video Game Localization Engine (Dialogue,
     }
 
     return res.status(500).json({ error: message });
+  }
+});
+
+// API Endpoint: Live Real-Time Streaming Translation (Server-Sent Events)
+app.post('/api/translate-stream', async (req, res) => {
+  // Set SSE streaming headers
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
+
+  const sendEvent = (event: string, data: any) => {
+    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  };
+
+  try {
+    const { items, sourceLanguage, targetLanguage, tone, customPrompt, mode, model } = req.body;
+
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      sendEvent('error', { error: 'آیتمی برای ترجمه ارسال نشده است.' });
+      return res.end();
+    }
+
+    const apiKeys = getClientKeysFromHeader(req);
+    const rawKeys = apiKeys.length > 0 ? apiKeys : [];
+    const keysToTry: string[] = [];
+    rawKeys.forEach((k) => {
+      const trimmed = String(k || '').trim();
+      if (trimmed && !keysToTry.includes(trimmed)) {
+        keysToTry.push(trimmed);
+      }
+    });
+
+    if (process.env.GEMINI_API_KEY) {
+      const envKey = process.env.GEMINI_API_KEY.trim();
+      if (envKey && !keysToTry.includes(envKey)) {
+        keysToTry.push(envKey);
+      }
+    }
+
+    if (keysToTry.length === 0) {
+      sendEvent('error', { error: 'کلید API جمینای تنظیم نشده است. لطفاً کلید API خود را وارد کنید.' });
+      return res.end();
+    }
+
+    const toneDescription = TONE_PROMPTS[tone] || TONE_PROMPTS.cinematic;
+    const userCustomPrompt = customPrompt?.trim() || '';
+
+    const systemInstruction = `SYSTEM INSTRUCTION FOR REAL-TIME STREAMING LOCALIZATION ENGINE:
+You are an expert real-time translator for movies, TV subtitles, and video games.
+Translate each provided line into ${targetLanguage} with extreme fidelity and natural fluency.
+
+[TONE & INSTRUCTIONS]
+Tone: ${toneDescription}
+Custom Instruction: "${userCustomPrompt || 'None'}"
+${mode === 'game' ? 'Operational Mode: Video Game Localization Engine' : 'Operational Mode: Movie & TV Subtitles (Cinema Engine)'}
+
+[STREAMING OUTPUT PROTOCOL - STRICT FORMAT]
+For each item in the input list, output in strict sequential order:
+ID: <number>
+TEXT: <translated string>
+---
+
+Example Output for 2 items:
+ID: 1
+TEXT: سلام، به بازی ما خوش آمدید!
+---
+ID: 2
+TEXT: لطفاً مأموریت جدید را آغاز کنید.
+---
+
+[CRITICAL CONSTRAINTS]
+1. PRESERVE VARIABLES & TAGS EXACTLY:
+   Retain placeholders ({player_name}, {0}, %s, %d, $amount, {ITEM_ID}), line breaks (\\n, \\r, \\t), HTML tags (<i>, <b>, <color=...>), and ASS codes (\\pos, \\c&H) untouched without corruption.
+2. TRANSLATE EVERY ITEM:
+   Output an "ID: <id>" block for every single input item without skipping, omitting, or merging.
+3. NO CONVERSATIONAL FILLER:
+   Do NOT output markdown intro text, greetings, code block fences, or explanations. Start immediately with the first ID line.`;
+
+    const promptText = `Translate the following ${items.length} ${mode === 'game' ? 'game strings' : 'subtitle lines'} into ${targetLanguage} (Source language: ${sourceLanguage || 'Auto-detect'}):\n` +
+      JSON.stringify(items.map((i: any) => ({ id: i.id, text: i.text, key: i.key, context: i.context })), null, 2);
+
+    const streamFallbackModels = ['gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-3.1-pro', 'gemini-2.5-pro'];
+    const models: string[] = [];
+    if (model && model !== 'gemini-live-stream') {
+      models.push(model);
+    }
+    streamFallbackModels.forEach((m) => {
+      if (!models.includes(m)) {
+        models.push(m);
+      }
+    });
+
+    let streamSuccess = false;
+    let lastError: any = null;
+
+    for (let kIdx = 0; kIdx < keysToTry.length; kIdx++) {
+      if (streamSuccess) break;
+      const currentKey = keysToTry[kIdx];
+      let ai: GoogleGenAI;
+      try {
+        ai = getGenAIClient(currentKey);
+      } catch (e) {
+        lastError = e;
+        continue;
+      }
+
+      for (let mIdx = 0; mIdx < models.length; mIdx++) {
+        if (streamSuccess) break;
+        const modelName = models[mIdx];
+
+        try {
+          sendEvent('status', { status: 'streaming_started', model: modelName, keyIndex: kIdx + 1 });
+
+          const responseStream = await ai.models.generateContentStream({
+            model: modelName,
+            contents: promptText,
+            config: {
+              systemInstruction,
+              safetySettings: [
+                { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+                { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+                { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+                { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+                { category: HarmCategory.HARM_CATEGORY_CIVIC_INTEGRITY, threshold: HarmBlockThreshold.BLOCK_NONE },
+              ],
+            },
+          });
+
+          let accumulatedBuffer = '';
+
+          for await (const chunk of responseStream) {
+            const chunkText = chunk.text || '';
+            if (!chunkText) continue;
+
+            accumulatedBuffer += chunkText;
+            sendEvent('chunk', { rawChunk: chunkText });
+
+            // Progressive parsing of completed "ID: ... TEXT: ... ---" blocks
+            const blockSeparatorRegex = /---\s*/g;
+            let match;
+            let lastIndex = 0;
+
+            while ((match = blockSeparatorRegex.exec(accumulatedBuffer)) !== null) {
+              const blockStr = accumulatedBuffer.substring(lastIndex, match.index).trim();
+              lastIndex = blockSeparatorRegex.lastIndex;
+
+              if (blockStr) {
+                const idMatch = blockStr.match(/ID:\s*(\d+)/i);
+                const textMatch = blockStr.match(/TEXT:\s*([\s\S]*)/i);
+
+                if (idMatch && textMatch) {
+                  const parsedId = parseInt(idMatch[1], 10);
+                  const parsedText = textMatch[1].trim();
+                  sendEvent('line_translated', {
+                    id: parsedId,
+                    text: parsedText,
+                    isComplete: true,
+                  });
+                }
+              }
+            }
+
+            if (lastIndex > 0) {
+              accumulatedBuffer = accumulatedBuffer.substring(lastIndex);
+            }
+          }
+
+          // Process any trailing block in buffer after stream ends
+          if (accumulatedBuffer.trim()) {
+            const idMatch = accumulatedBuffer.match(/ID:\s*(\d+)/i);
+            const textMatch = accumulatedBuffer.match(/TEXT:\s*([\s\S]*)/i);
+            if (idMatch && textMatch) {
+              const parsedId = parseInt(idMatch[1], 10);
+              const parsedText = textMatch[1].replace(/---.*$/, '').trim();
+              sendEvent('line_translated', {
+                id: parsedId,
+                text: parsedText,
+                isComplete: true,
+              });
+            }
+          }
+
+          sendEvent('done', { success: true });
+          streamSuccess = true;
+          return res.end();
+        } catch (streamErr: any) {
+          const msg = streamErr?.message || String(streamErr);
+          lastError = streamErr;
+          console.warn(`[Gemini Stream Error] Key #${kIdx + 1}, Model ${modelName}:`, msg);
+
+          const isRateLimit = msg.includes('429') || msg.toLowerCase().includes('quota') || msg.toLowerCase().includes('resource_exhausted');
+          if (isRateLimit && kIdx < keysToTry.length - 1) {
+            sendEvent('status', { status: 'key_failover', nextKeyIndex: kIdx + 2 });
+            break; // Try next key
+          }
+        }
+      }
+    }
+
+    if (!streamSuccess) {
+      const errMsg = lastError?.message || 'خطا در برقراری اتصال زنده با جمینای';
+      sendEvent('error', { error: errMsg });
+      return res.end();
+    }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Streaming endpoint failure';
+    console.error('Streaming translation error:', err);
+    sendEvent('error', { error: message });
+    return res.end();
   }
 });
 
