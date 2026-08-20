@@ -62,7 +62,7 @@ Due to geographical restrictions on Google AI services, please adhere to these g
 ### 5. Self-Hosting Guide: Railway Deployment (Step-by-Step)
 Deploy your own instance on Railway in minutes:
 1.  **Fork the repo**: Fork [github.com/gguhfhu7-sketch/SubGame-Lab](https://github.com/gguhfhu7-sketch/SubGame-Lab).
-2.  **Log in to Railway**: Sign up or log in to [railway.app](https://railway.app) using your GitHub account.
+2.  **Log in to Railway**: Sign up or log in to [railway.com](https://railway.com) using your GitHub account.
 3.  **New Project**: Click **"New Project"** -> **"Deploy from GitHub repo"** -> Select your forked `SubGame-Lab` repo.
 4.  **Wait for Deployment**: Wait for the build and deployment process to finish.
 5.  **Generate Domain**: Go to **Project Settings** -> **Networking** -> Click **"Generate Domain"** to obtain your free live URL.
@@ -149,7 +149,7 @@ To run the application locally on your machine:
 ### ۵. راهنمای میزبانی شخصی: استقرار در Railway (گام‌به‌گام)
 می‌توانید در عرض چند دقیقه نسخه اختصاصی خود را روی Railway مستقر کنید:
 1.  **فورک کردن مخزن**: مخزن [github.com/gguhfhu7-sketch/SubGame-Lab](https://github.com/gguhfhu7-sketch/SubGame-Lab) را فورک کنید.
-2.  **ثبت‌نام در Railway**: با حساب کاربری گیت‌هاب خود وارد سایت [railway.app](https://railway.app) شوید.
+2.  **ثبت‌نام در Railway**: با حساب کاربری گیت‌هاب خود وارد سایت [railway.com](https://railway.com) شوید.
 3.  **پروژه جدید**: روی دکمه **"New Project"** کلیک کرده و گزینه **"Deploy from GitHub repo"** را انتخاب نمایید. سپس مخزن فورک‌شده‌ی `SubGame-Lab` را انتخاب کنید.
 4.  **صبر برای ساخت**: منتظر بمانید تا فرآیند ساخت و استقرار به طور خودکار به پایان برسد.
 5.  **تولید دامنه**: به بخش **Project Settings** -> **Networking** بروید و روی **"Generate Domain"** کلیک کنید تا آدرس زنده و رایگان خود را دریافت نمایید.
@@ -236,7 +236,7 @@ To run the application locally on your machine:
 ### ٥. دليل الاستضافة الشخصية: النشر على Railway (خطوة بخطوة)
 انشر نسختك الخاصة على خوادم Railway في دقائق معدودة:
 1.  **عمل فورك للمستودع**: قم بعمل Fork للمستودع [github.com/gguhfhu7-sketch/SubGame-Lab](https://github.com/gguhfhu7-sketch/SubGame-Lab).
-2.  **تسجيل الدخول في Railway**: قم بتسجيل الدخول إلى [railway.app](https://railway.app) باستخدام حساب جيت هاب الخاص بك.
+2.  **تسجيل الدخول في Railway**: قم بتسجيل الدخول إلى [railway.com](https://railway.com) باستخدام حساب جيت هاب الخاص بك.
 3.  **مشروع جديد**: اضغط على **"New Project"** -> ثم اختر **"Deploy from GitHub repo"** -> حدد مستودع `SubGame-Lab` المنسوخ.
 4.  **انتظار البناء**: انتظر حتى تكتمل عملية البناء والتشغيل تلقائياً.
 5.  **توليد النطاق**: اذهب إلى **Project Settings** -> **Networking** واضغط على **"Generate Domain"** للحصول على رابط إنترنت حي ومجاني لعملك.
