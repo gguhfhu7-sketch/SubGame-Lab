@@ -20,6 +20,9 @@
 ### 1. Project Overview & Mission
 **SubGame Lab** is an all-in-one, high-performance AI studio built with **React 18, TypeScript, Vite, Tailwind CSS, TanStack Virtual, SheetJS, and @google/genai SDK**. Designed specifically for professional cinema subtitle editing and video game dialogue localization, this platform offers translators, localizers, and developers an elite interface to transcribe, translate, style, and synchronize multilingual content seamlessly without schema distortion or performance issues.
 
+✨ **UI/UX Refinement & Interface Improvements**:
+The platform has undergone a comprehensive UI/UX polish to provide maximum visual clarity, responsiveness, and smoother interaction across all devices. This update fixes UI layout bugs and overflow issues, ensuring perfect styling consistency and visual harmony across all control panels.
+
 ---
 
 ### 2. Dual Engine Architecture
@@ -41,7 +44,9 @@ Specifically tailored to handle complex, non-linear video game dialogue structur
 ---
 
 ### 3. AI Core & Resilience Features
-*   **AI Models**: Powered by the state-of-the-art primary model `gemini-3.6-flash`, with an automated, resilient fallback to `gemini-2.5-flash` in case of service interruptions.
+*   **Custom Model Selection (Model Selector)**: Added a new Model Selector dropdown allowing users to freely choose their preferred Gemini AI model (including Flash, Pro, and Live Stream engines) based on their specific speed, accuracy, or translation needs.
+*   **Built-in Model Guide**: Includes an interactive guide within the app to help users understand which model fits their game text or subtitle workload best (e.g., optimizing for low-cost speed or complex context reasoning).
+*   **AI Models & Resilience**: Primary default engine `gemini-3.6-flash` with a resilient fallback to `gemini-2.5-flash` to ensure continuous batch operations in case of rate limits or service interruptions.
 *   **BYOK Multi-Key API Rotation**: Bring Your Own Key (BYOK) system supporting multiple API keys entered line-by-line, automatically rotating keys upon encountering HTTP 429 Rate Limits to ensure continuous batch operations.
 *   **Tone & Custom Prompts**: Supports over 50 languages, predefined localization tones (Cinematic, Formal, Gaming Lore, Colloquial), and full support for Custom Tones / System Prompts.
 *   **Glossary Dictionary**: Custom dictionary to enforce locked terminology, item names, and character lore across translations.
@@ -62,7 +67,7 @@ Due to geographical restrictions on Google AI services, please adhere to these g
 ### 5. Self-Hosting Guide: Railway Deployment (Step-by-Step)
 Deploy your own instance on Railway in minutes:
 1.  **Fork the repo**: Fork [github.com/gguhfhu7-sketch/SubGame-Lab](https://github.com/gguhfhu7-sketch/SubGame-Lab).
-2.  **Log in to Railway**: Sign up or log in to [railway.com](https://railway.com) using your GitHub account.
+2.  **Log in to Railway**: Sign up or log in to [railway.app](https://railway.app) using your GitHub account.
 3.  **New Project**: Click **"New Project"** -> **"Deploy from GitHub repo"** -> Select your forked `SubGame-Lab` repo.
 4.  **Wait for Deployment**: Wait for the build and deployment process to finish.
 5.  **Generate Domain**: Go to **Project Settings** -> **Networking** -> Click **"Generate Domain"** to obtain your free live URL.
@@ -71,20 +76,20 @@ Deploy your own instance on Railway in minutes:
 
 ### 6. Local Setup Instructions
 To run the application locally on your machine:
-1.  **Clone the repository**:
-    ```bash
-    git clone https://github.com/gguhfhu7-sketch/SubGame-Lab.git
-    cd SubGame-Lab
+1.  **Clone the repository**:\
+    ```bash\
+    git clone https://github.com/gguhfhu7-sketch/SubGame-Lab.git\
+    cd SubGame-Lab\
     ```
-2.  **Install dependencies**:
-    ```bash
-    npm install
+2.  **Install dependencies**:\
+    ```bash\
+    npm install\
     ```
-3.  **Start development server**:
-    ```bash
-    npm run dev
+3.  **Start development server**:\
+    ```bash\
+    npm run dev\
     ```
-4.  **Open browser**: Open [http://localhost:3000](http://localhost:3000) to view the app.
+4.  **Open browser**: Open [http://localhost:3000](http://localhost:3000) to view the app.\
 *(Note: Make sure your VPN has TUN Mode enabled if you are in a restricted region like Iran to route local API requests properly)*.
 
 ---
@@ -107,6 +112,9 @@ To run the application locally on your machine:
 ### ۱. بررسی اجمالی پروژه و مأموریت
 پروژه **SubGame Lab** یک استودیوی همه‌کاره و قدرتمند مبتنی بر هوش مصنوعی است که با آخرین فناوری‌های روز توسعه یافته است: **React 18، TypeScript، Vite، Tailwind CSS، TanStack Virtual، SheetJS** و SDK رسمی **@google/genai**. این پلتفرم به طور ویژه برای ویرایش زیرنویس‌های سینمایی و بومی‌سازی دیالوگ‌های بازی‌های ویدئویی طراحی شده است تا چالش‌های مترجمان، بومی‌سازان و تولیدکنندگان محتوا را برطرف کند. با استفاده از این ابزار می‌توانید محتوای چندرسانه‌ای خود را با سرعت، دقت بالا و کارایی فوق‌العاده پیاده‌سازی، ترجمه و هماهنگ کنید.
 
+✨ **بهبود و بازطراحی رابط و تجربه کاربری (UI/UX Refinement)**:
+این پلتفرم تحت یک بازطراحی و صیقل‌دهی کلی رابط و تجربه کاربری قرار گرفته است که وضوح بصری، واکنش‌گرایی بالا و تعامل بسیار روان‌تری را به همراه دارد. در این به‌روزرسانی، تمامی باگ‌های چیدمان (Layout)، مشکلات سرریز متون (Overflow) و عدم یکپارچگی استایل‌ها در تمامی پنل‌های کنترل برطرف شده است.
+
 ---
 
 ### ۲. معماری موتور دوگانه (Dual Engine)
@@ -128,8 +136,10 @@ To run the application locally on your machine:
 ---
 
 ### ۳. هسته هوش مصنوعی و ویژگی‌های پایداری (Resilience)
-*   **مدل‌های هوش مصنوعی**: استفاده از مدل پیشرفته و قدرتمند `gemini-3.6-flash` به عنوان موتور اصلی، همراه با سیستم پشتیبان خودکار (Fallback) به مدل `gemini-2.5-flash` در صورت بروز هرگونه اختلال.
-*   **چرخش خودکار کلیدها (BYOK Multi-Key API Rotation)**: پشتیبانی از وارد کردن چندین کلید API (هر کلید در یک خط). سیستم به طور خودکار در صورت مواجهه با محدودیت نرخ درخواست (خطای HTTP 429)، کلیدها را چرخاند و عملیات ترجمه را بدون توقف ادامه می‌دهد.
+*   **امکان انتخاب مدل دلخواه (Custom Model Selection)**: اضافه شدن یک منوی کشویی جدید برای انتخاب مدل (Model Selector) که به کاربران اجازه می‌دهد مدل Gemini دلخواه خود را (مانند موتورهای Flash ،Pro و Live Stream) بر اساس سرعت، دقت یا نیازهای خاص ترجمه خود به طور آزادانه انتخاب کنند.
+*   **راهنمای داخلی مدل‌ها (Model Guide)**: شامل یک راهنمای توکار و تعاملی در داخل برنامه تا کاربران به راحتی متوجه شوند کدام مدل برای حجم متون بازی یا زیرنویس آن‌ها مناسب‌ترین گزینه است (مانند بهینه‌سازی سرعت با هزینه کم یا استدلال متنی پیچیده).
+*   **پایداری و مدل‌های پشتیبان**: مدل پیش‌فرض `gemini-3.6-flash` همراه با سیستم پشتیبان خودکار (Fallback) به مدل `gemini-2.5-flash` در صورت مواجهه با محدودیت نرخ درخواست یا بروز هرگونه اختلال در سرویس جهت تضمین پایداری عملیات.
+*   **چرخش خودکار کلیدها (BYOK Multi-Key API Rotation)**: پشتیبانی از وارد کردن چندین کلید API (هر کلید در یک خط). سیستم به طور خودکار در صورت مواجهه با محدودیت نرخ درخواست (خطای HTTP 429)، کلیدها را چرخانده و عملیات ترجمه را بدون توقف ادامه می‌دهد.
 *   **لحن‌ها و پرامپت‌های سفارشی**: پشتیبانی از بیش از ۵۰ زبان زنده دنیا، لحن‌های پیش‌فرض بومی‌سازی (سینمایی، رسمی، افسانه‌سرایی بازی، عامیانه) و پشتیبانی کامل از پرامپت‌های سیستم و لحن‌های سفارشی کاربر.
 *   **فرهنگ لغت واژگان (Glossary)**: امکان تعریف دیکشنری سفارشی برای قفل کردن اصطلاحات خاص، نام آیتم‌ها، نام شخصیت‌ها و حفظ یکپارچگی داستان بازی.
 *   **عملکرد فوق‌العاده با مجازی‌سازی**: بهره‌گیری از کتابخانه `@tanstack/react-virtual` جهت رندر روان و بدون لگ بیش از ۵۰,۰۰۰ ردیف داده با نرخ ۶۰ فریم بر ثانیه.
@@ -149,7 +159,7 @@ To run the application locally on your machine:
 ### ۵. راهنمای میزبانی شخصی: استقرار در Railway (گام‌به‌گام)
 می‌توانید در عرض چند دقیقه نسخه اختصاصی خود را روی Railway مستقر کنید:
 1.  **فورک کردن مخزن**: مخزن [github.com/gguhfhu7-sketch/SubGame-Lab](https://github.com/gguhfhu7-sketch/SubGame-Lab) را فورک کنید.
-2.  **ثبت‌نام در Railway**: با حساب کاربری گیت‌هاب خود وارد سایت [railway.com](https://railway.com) شوید.
+2.  **ثبت‌نام در Railway**: با حساب کاربری گیت‌هاب خود وارد سایت [railway.app](https://railway.app) شوید.
 3.  **پروژه جدید**: روی دکمه **"New Project"** کلیک کرده و گزینه **"Deploy from GitHub repo"** را انتخاب نمایید. سپس مخزن فورک‌شده‌ی `SubGame-Lab` را انتخاب کنید.
 4.  **صبر برای ساخت**: منتظر بمانید تا فرآیند ساخت و استقرار به طور خودکار به پایان برسد.
 5.  **تولید دامنه**: به بخش **Project Settings** -> **Networking** بروید و روی **"Generate Domain"** کلیک کنید تا آدرس زنده و رایگان خود را دریافت نمایید.
@@ -158,20 +168,20 @@ To run the application locally on your machine:
 
 ### ۶. دستورالعمل راه‌اندازی محلی (Local)
 برای اجرای برنامه به صورت محلی روی سیستم خود مراحل زیر را دنبال کنید:
-1.  **کلون کردن مخزن گیت‌هاب**:
-    ```bash
-    git clone https://github.com/gguhfhu7-sketch/SubGame-Lab.git
-    cd SubGame-Lab
+1.  **کلون کردن مخزن گیت‌هاب**:\
+    ```bash\
+    git clone https://github.com/gguhfhu7-sketch/SubGame-Lab.git\
+    cd SubGame-Lab\
     ```
-2.  **نصب پکیج‌ها و وابستگی‌ها**:
-    ```bash
-    npm install
+2.  **نصب پکیج‌ها و وابستگی‌ها**:\
+    ```bash\
+    npm install\
     ```
-3.  **اجرای سرور توسعه محلی**:
-    ```bash
-    npm run dev
+3.  **اجرای سرور توسعه محلی**:\
+    ```bash\
+    npm run dev\
     ```
-4.  **باز کردن مرورگر**: مرورگر خود را باز کرده و به آدرس [http://localhost:3000](http://localhost:3000) مراجعه فرمایید.
+4.  **باز کردن مرورگر**: مرورگر خود را باز کرده و به آدرس [http://localhost:3000](http://localhost:3000) مراجعه فرمایید.\
 *(توجه: در صورتی که در ایران هستید، برای ارسال موفق درخواست‌ها به سرور گوگل، حتماً پیش از اجرای برنامه، VPN خود را روی حالت TUN Mode فعال نمایید)*.
 
 ---
@@ -194,6 +204,9 @@ To run the application locally on your machine:
 ### ١. نظرة عامة على المشروع ورسالته
 يعتبر **SubGame Lab** استوديو متكامل يعمل بالذكاء الاصطناعي وتم بناؤه باستخدام أحدث التقنيات البرمجية: **React 18، TypeScript، Vite، Tailwind CSS، TanStack Virtual، SheetJS**، وحزمة التطوير الرسمية **@google/genai SDK**. تم تصميم هذا المشروع خصيصاً لتلبية احتياجات تحرير وتعديل ترجمات الأفلام السينمائية وتوطين حوارات ألعاب الفيديو، مما يسهل سير عمل المترجمين والمطورين ومنشئي المحتوى. توفر هذه المنصة واجهة ويب احترافية فائقة الأداء لتفريغ النصوص، وترجمتها، وتنسيقها، ومزامنتها بكل سهولة وبدون حدوث أي تشويه في بنية البيانات.
 
+✨ **تحسينات واجهة وتجربة المستخدم (UI/UX Refinement)**:
+تم صقل واجهة المستخدم بالكامل لتقديم وضوح بصري فائق، واستجابة مثالية، وتفاعل أكثر سلاسة عبر جميع الأجهزة. هذا التحديث يصلح مشكلات التخطيط البرمجية وتجاوز الأسطر (Overflow)، مما يضمن التناسق التام والمظهر الجمالي الموحد لجميع لوحات التحكم.
+
 ---
 
 ### ٢. بنية المحرك المزدوج (Dual Engine)
@@ -215,7 +228,9 @@ To run the application locally on your machine:
 ---
 
 ### ٣. قدرات الذكاء الاصطناعي وميزات الاستقرار (Resilience)
-*   **نماذج الذكاء الاصطناعي**: استخدام النموذج الرائد `gemini-3.6-flash` كمحرك أساسي، مع تفعيل نظام الرجوع التلقائي الاحتياطي (Fallback) إلى نموذج `gemini-2.5-flash` في حال حدوث أي انقطاع بالخدمة.
+*   **اختيار النموذج المخصص (Custom Model Selection)**: إضافة قائمة منسدلة جديدة لتحديد النموذج المفضل (Model Selector) تتيح للمستخدمين حرية اختيار نموذج Gemini المناسب لهم (بما في ذلك محركات Flash و Pro و Live Stream) بناءً على السرعة أو الدقة المطلوبة أو متطلبات الترجمة والعمل.
+*   **دليل النماذج المدمج (Model Guide)**: يحتوي على دليل إرشادي تفاعلي ومدمج لمساعدة المستخدمين في تحديد النموذج الأكثر ملاءمة وسرعة لطبيعة وحجم نصوص ألعابهم أو ترجماتهم المرئية.
+*   **استقرار النماذج والرجوع الاحتياطي (Fallback)**: يعتمد النظام على النموذج الأساسي `gemini-3.6-flash` مع ميزة الرجوع التلقائي الاحتياطي (Fallback) إلى `gemini-2.5-flash` في حال حدوث أي انقطاع بالخدمة أو تجاوز حدود الاستخدام لضمان تشغيل العمليات بشكل مستمر ومتصل.
 *   **تدوير المفاتيح التلقائي (BYOK Multi-Key API Rotation)**: نظام إدخال مفاتيح متعددة (كل مفتاح في سطر). يقوم النظام تلقائياً بتدوير المفاتيح وتغييرها عند مواجهة خطأ حد الطلبات HTTP 429 لضمان استمرار عمليات الترجمة الضخمة دون توقف.
 *   **نبرة الصوت والبرومبت المخصص**: دعم لأكثر من 50 لغة، وتوفير نبرات توطين جاهزة (سينمائي، رسمي، بيئة ألعاب، عامي)، مع دعم كامل لإضافة نبرات مخصصة أو برومبتات للنظام.
 *   **قاموس المصطلحات (Glossary)**: لتأكيد وإلزام الذكاء الاصطناعي بمصطلحات محددة، مثل أسماء الأدوات والشخصيات وعوالم الألعاب للحفاظ على ترابط المحتوى.
@@ -236,7 +251,7 @@ To run the application locally on your machine:
 ### ٥. دليل الاستضافة الشخصية: النشر على Railway (خطوة بخطوة)
 انشر نسختك الخاصة على خوادم Railway في دقائق معدودة:
 1.  **عمل فورك للمستودع**: قم بعمل Fork للمستودع [github.com/gguhfhu7-sketch/SubGame-Lab](https://github.com/gguhfhu7-sketch/SubGame-Lab).
-2.  **تسجيل الدخول في Railway**: قم بتسجيل الدخول إلى [railway.com](https://railway.com) باستخدام حساب جيت هاب الخاص بك.
+2.  **تسجيل الدخول في Railway**: قم بتسجيل الدخول إلى [railway.app](https://railway.app) باستخدام حساب جيت هاب الخاص بك.
 3.  **مشروع جديد**: اضغط على **"New Project"** -> ثم اختر **"Deploy from GitHub repo"** -> حدد مستودع `SubGame-Lab` المنسوخ.
 4.  **انتظار البناء**: انتظر حتى تكتمل عملية البناء والتشغيل تلقائياً.
 5.  **توليد النطاق**: اذهب إلى **Project Settings** -> **Networking** واضغط على **"Generate Domain"** للحصول على رابط إنترنت حي ومجاني لعملك.
@@ -245,18 +260,18 @@ To run the application locally on your machine:
 
 ### ٦. تعليمات التثبيت والتشغيل المحلي
 لتشغيل التطبيق محلياً على جهاز الكمبيوتر الخاص بك، اتبع الخطوات التالية:
-1.  **استنساخ المستودع**:
-    ```bash
-    git clone https://github.com/gguhfhu7-sketch/SubGame-Lab.git
-    cd SubGame-Lab
+1.  **استنساخ المستودع**:\
+    ```bash\
+    git clone https://github.com/gguhfhu7-sketch/SubGame-Lab.git\
+    cd SubGame-Lab\
     ```
-2.  **تثبيت الحزم والتبعيات**:
-    ```bash
-    npm install
+2.  **تثبيت الحزم والتبعيات**:\
+    ```bash\
+    npm install\
     ```
-3.  **بدء تشغيل خادم التطوير المحلي**:
-    ```bash
-    npm run dev
+3.  **بدء تشغيل خادم التطوير المحلي**:\
+    ```bash\
+    npm run dev\
     ```
-4.  **افتح متصفحك**: اذهب إلى العنوان: [http://localhost:3000](http://localhost:3000).
+4.  **افتح متصفحك**: اذهب إلى العنوان: [http://localhost:3000](http://localhost:3000).\
 *(ملاحظة: تأكد من تفعيل وضع TUN Mode في برنامج الـ VPN الخاص بك إذا كنت تعمل من منطقة تخضع لقيود جغرافية لضمان تواصل محلي ناجح مع واجهات جوجل البرمجية)*.
