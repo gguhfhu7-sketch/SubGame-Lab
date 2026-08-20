@@ -1,0 +1,88 @@
+@import "tailwindcss";
+
+@layer utilities {
+  @keyframes spin-slow {
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  @keyframes shimmer {
+    100% {
+      transform: translateX(100%);
+    }
+  }
+
+  @keyframes slide-up {
+    from {
+      opacity: 0;
+      transform: translateY(1rem);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes slide-left {
+    from {
+      opacity: 0;
+      transform: translateX(2rem);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  .animate-spin-slow {
+    animation: spin-slow 8s linear infinite;
+  }
+
+  .animate-shimmer {
+    animation: shimmer 2s infinite;
+  }
+
+  .animate-slide-up {
+    animation: slide-up 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+
+  .animate-slide-left {
+    animation: slide-left 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+
+  .animate-fade-in {
+    animation: fade-in 0.2s ease-out forwards;
+  }
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.6);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(99, 102, 241, 0.3);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(99, 102, 241, 0.6);
+}

@@ -1,0 +1,6 @@
+{
+  "name": "SubGame Lab | AI Subtitle & Game Translator",
+  "description": "Next-Gen Subtitle & Game Localization Engine (SRT, VTT, ASS, CSV, JSON, XLSX, TXT) powered by Gemini AI with high-speed virtualized editing and bilingual subtitle support.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
