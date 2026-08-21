@@ -10,8 +10,7 @@ import {
   BrainCircuit, 
   Flame, 
   CheckCircle2, 
-  Gauge, 
-  Coins 
+  Gauge 
 } from 'lucide-react';
 
 interface ModelGuideModalProps {
@@ -204,14 +203,10 @@ export const ModelGuideModal: React.FC<ModelGuideModalProps> = ({
                       {bestForText}
                     </span>
                   </div>
-                  <div className="flex items-center gap-3 text-slate-500 dark:text-slate-400 sm:justify-end">
-                    <span className="flex items-center gap-1">
+                  <div className="flex flex-wrap items-center gap-3 text-slate-500 dark:text-slate-400 sm:justify-end">
+                    <span className="flex items-center gap-1 font-medium">
                       <Gauge className="w-3.5 h-3.5 text-indigo-500" />
-                      <span>{meta.speed}</span>
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <Coins className="w-3.5 h-3.5 text-emerald-500" />
-                      <span>{model.id.includes('pro') ? 'High Logic' : 'Eco Token'}</span>
+                      <span>{model.speed || meta.speed}</span>
                     </span>
                   </div>
                 </div>

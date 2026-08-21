@@ -1,6 +1,20 @@
 import React from 'react';
 import { UILanguage, TRANSLATIONS } from '../lib/i18n';
-import { Pause, Play, XCircle, Loader2 } from 'lucide-react';
+import { AI_MODELS } from '../constants';
+import { AIModelId } from '../types';
+import { 
+  Pause, 
+  Play, 
+  XCircle, 
+  Loader2, 
+  Zap, 
+  Radio, 
+  BrainCircuit, 
+  Sparkles, 
+  Flame,
+  ShieldAlert,
+  Clock
+} from 'lucide-react';
 
 interface TranslationProgressProps {
   currentBatch: number;
@@ -12,6 +26,10 @@ interface TranslationProgressProps {
   onCancel: () => void;
   retryInfo?: { batch: number; attempt: number; maxRetries: number } | null;
   uiLang: UILanguage;
+  selectedModel?: AIModelId;
+  isFallbackActive?: boolean;
+  rateLimitPacing?: boolean;
+  pacingRemainingSec?: number | null;
 }
 
 export const TranslationProgress: React.FC<TranslationProgressProps> = ({
@@ -24,9 +42,31 @@ export const TranslationProgress: React.FC<TranslationProgressProps> = ({
   onCancel,
   retryInfo,
   uiLang,
+  selectedModel = 'gemini-3.6-flash',
+  isFallbackActive = false,
+  rateLimitPacing = false,
+  pacingRemainingSec = null,
 }) => {
   const percentage = totalLines > 0 ? Math.min(100, Math.round((translatedLines / totalLines) * 100)) : 0;
   const t = TRANSLATIONS[uiLang];
+
+  const currentModelInfo = AI_MODELS.find((m) => m.id === selectedModel) || AI_MODELS[0];
+
+  const getModelIcon = (id?: string) => {
+    switch (id) {
+      case 'gemini-live-stream':
+        return <Radio className="w-5 h-5 text-rose-400 animate-pulse" />;
+      case 'gemini-3.1-pro':
+        return <BrainCircuit className="w-5 h-5 text-purple-400" />;
+      case 'gemini-2.5-pro':
+        return <Sparkles className="w-5 h-5 text-indigo-400" />;
+      case 'gemini-2.5-flash':
+        return <Flame className="w-5 h-5 text-blue-400" />;
+      case 'gemini-3.6-flash':
+      default:
+        return <Zap className="w-5 h-5 text-emerald-400" />;
+    }
+  };
 
   const getPausedNotice = () => {
     if (uiLang === 'en') return 'Translation paused. Click "Resume" to continue.';
@@ -41,21 +81,37 @@ export const TranslationProgress: React.FC<TranslationProgressProps> = ({
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 flex items-center justify-center shrink-0">
-            <Loader2 className="w-5 h-5 animate-spin" />
+            {isPaused ? <Pause className="w-5 h-5 text-amber-400" /> : getModelIcon(selectedModel)}
           </div>
           <div>
-            <h3 className="text-sm font-bold text-white flex items-center gap-2 flex-wrap">
-              <span>{t.translatingProgress}</span>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h3 className="text-sm font-bold text-white flex items-center gap-2 flex-wrap">
+                <span>{t.translatingProgress} {currentModelInfo.name}</span>
+              </h3>
+              {isFallbackActive && (
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                  {uiLang === 'en' ? '(Fallback Active)' : uiLang === 'ar' ? '(محرك احتياطي نشط)' : '(موتور پشتیبان فعال)'}
+                </span>
+              )}
+              <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${currentModelInfo.badgeColor}`}>
+                {currentModelInfo.badge}
+              </span>
               <span className="text-[10px] font-mono font-extrabold px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300">
                 {percentage}%
               </span>
+              {rateLimitPacing && (
+                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1">
+                  <ShieldAlert className="w-3 h-3 text-amber-400" />
+                  {t.rateLimitPacingBadge}
+                </span>
+              )}
               {retryInfo && retryInfo.attempt > 1 && (
                 <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 animate-pulse">
                   {t.retryAttempt} {retryInfo.attempt}/{retryInfo.maxRetries}
                 </span>
               )}
-            </h3>
-            <p className="text-xs text-slate-400 mt-0.5">
+            </div>
+            <p className="text-xs text-slate-400 mt-1">
               {t.batch} <strong className="text-white font-mono">{currentBatch}</strong> {t.of} <strong className="text-white font-mono">{totalBatches}</strong> •{' '}
               <strong className="text-emerald-400 font-mono">{translatedLines}</strong> {t.of} <strong className="text-slate-300 font-mono">{totalLines}</strong> {t.linesCount}
             </p>
@@ -100,6 +156,14 @@ export const TranslationProgress: React.FC<TranslationProgressProps> = ({
           <div className="absolute inset-0 bg-[linear-gradient(90deg,transparent_0%,rgba(255,255,255,0.3)_50%,transparent_100%)] animate-shimmer" />
         </div>
       </div>
+
+      {/* Pacing Cooldown Feedback Notification */}
+      {pacingRemainingSec !== null && pacingRemainingSec > 0 && !isPaused && (
+        <div className="text-center text-xs text-amber-300 bg-amber-500/15 border border-amber-500/30 py-1.5 px-3 rounded-lg font-medium flex items-center justify-center gap-2 animate-pulse">
+          <Clock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+          <span>{t.pacingWaitingDelay.replace('{seconds}', String(pacingRemainingSec))}</span>
+        </div>
+      )}
 
       {isPaused && (
         <div className="text-center text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 py-1.5 rounded-lg font-medium">

@@ -36,7 +36,12 @@ import {
   exportBilingualSubtitleFile, 
   repairCorruptedSubtitleItems 
 } from './lib/bilingualHelper';
-import { SAMPLE_SRT_CONTENT, SAMPLE_GAME_CSV_CONTENT, SAMPLE_GAME_JSON_CONTENT } from './constants';
+import { 
+  SAMPLE_SRT_CONTENT, 
+  SAMPLE_GAME_CSV_CONTENT, 
+  SAMPLE_GAME_JSON_CONTENT,
+  AI_MODELS 
+} from './constants';
 import { getApiKeyArrayForHeader } from './lib/apiKeyManager';
 import { UILanguage, TRANSLATIONS } from './lib/i18n';
 import { SUBGAME_LAB_LOGO } from './assets/logo';
@@ -161,10 +166,48 @@ export default function App() {
   const [targetFormat, setTargetFormat] = useState<SubtitleFormat | GameFormat>('srt');
 
   // Advanced Optimization & Localization options
-  const [batchSize, setBatchSize] = useState<BatchSizeOption>(35);
+  const [selectedModel, setSelectedModel] = useState<AIModelId>(() => {
+    const saved = localStorage.getItem('subgamelab_selected_model');
+    if (saved && AI_MODELS.some((m) => m.id === saved)) {
+      return saved as AIModelId;
+    }
+    return 'gemini-3.6-flash';
+  });
+  const [activeRunningModel, setActiveRunningModel] = useState<AIModelId | undefined>(undefined);
+  const [isFallbackActive, setIsFallbackActive] = useState<boolean>(false);
+
+  const [batchSize, setBatchSize] = useState<BatchSizeOption>(() => {
+    const saved = localStorage.getItem('subgamelab_custom_batch_size');
+    if (saved) {
+      const parsed = parseInt(saved, 10);
+      if (!isNaN(parsed) && parsed > 0) return parsed;
+    }
+    return 35;
+  });
+
+  const handleSetBatchSize = (size: BatchSizeOption) => {
+    setBatchSize(size);
+    localStorage.setItem('subgamelab_custom_batch_size', String(size));
+  };
+
   const [skipCodeOnly, setSkipCodeOnly] = useState<boolean>(true);
   const [appendRTLMarkers, setAppendRTLMarkers] = useState<boolean>(true);
-  const [selectedModel, setSelectedModel] = useState<AIModelId>('gemini-3.6-flash');
+  const [rateLimitPacing, setRateLimitPacing] = useState<boolean>(() => {
+    const saved = localStorage.getItem('subgamelab_rate_limit_pacing');
+    return saved !== null ? saved === 'true' : true;
+  });
+  const [pacingRemainingSec, setPacingRemainingSec] = useState<number | null>(null);
+
+  const handleToggleRateLimitPacing = (val: boolean) => {
+    setRateLimitPacing(val);
+    localStorage.setItem('subgamelab_rate_limit_pacing', String(val));
+  };
+
+  // Model switch handler (pure model selection without overriding custom batch size)
+  const handleSelectModel = (modelId: AIModelId) => {
+    setSelectedModel(modelId);
+    localStorage.setItem('subgamelab_selected_model', modelId);
+  };
 
   // Translation execution state
   const [isTranslating, setIsTranslating] = useState<boolean>(false);
@@ -431,6 +474,7 @@ export default function App() {
           tone: selectedTone,
           customPrompt,
           mode,
+          model: selectedModel,
         }),
       });
 
@@ -664,10 +708,27 @@ export default function App() {
         showToast(streamErr?.message || 'Error in live streaming translation', 'error');
       }
 
-      // Small throttle between stream blocks
-      await new Promise((resolve) => setTimeout(resolve, 600));
+      // Small throttle between stream blocks with rate-limit pacing support
+      if (b < totalBatchesCount - 1 && !cancelTranslationRef.current) {
+        if (rateLimitPacing) {
+          const delaySeconds = 3;
+          for (let s = delaySeconds; s > 0; s--) {
+            if (cancelTranslationRef.current) break;
+            while (isPausedRef.current) {
+              if (cancelTranslationRef.current) break;
+              await new Promise((r) => setTimeout(r, 500));
+            }
+            setPacingRemainingSec(s);
+            await new Promise((r) => setTimeout(r, 1000));
+          }
+          setPacingRemainingSec(null);
+        } else {
+          await new Promise((resolve) => setTimeout(resolve, 600));
+        }
+      }
     }
 
+    setPacingRemainingSec(null);
     setIsTranslating(false);
 
     if (!cancelTranslationRef.current) {
@@ -685,6 +746,9 @@ export default function App() {
     setIsTranslating(true);
     setIsPaused(false);
     cancelTranslationRef.current = false;
+    setActiveRunningModel(selectedModel);
+    setIsFallbackActive(false);
+    setPacingRemainingSec(null);
 
     // If live streaming model is selected, use real-time stream engine
     if (selectedModel === 'gemini-live-stream') {
@@ -799,6 +863,13 @@ export default function App() {
           }
 
           const data = await response.json();
+          if (data.modelUsed) {
+            setActiveRunningModel(data.modelUsed as AIModelId);
+          }
+          if (data.isFallback !== undefined) {
+            setIsFallbackActive(Boolean(data.isFallback));
+          }
+
           const translationsList: Array<{ id: number; text: string }> = data.translations || [];
 
           // Merge translations into state
@@ -832,10 +903,27 @@ export default function App() {
         }
       }
 
-      // Throttle delay between batches
-      await new Promise((resolve) => setTimeout(resolve, 1200));
+      // Pacing delay between batches to protect against RPM/TPM rate limits
+      if (b < totalBatchesCount - 1 && !cancelTranslationRef.current) {
+        if (rateLimitPacing) {
+          const delaySeconds = 4;
+          for (let s = delaySeconds; s > 0; s--) {
+            if (cancelTranslationRef.current) break;
+            while (isPausedRef.current) {
+              if (cancelTranslationRef.current) break;
+              await new Promise((r) => setTimeout(r, 500));
+            }
+            setPacingRemainingSec(s);
+            await new Promise((r) => setTimeout(r, 1000));
+          }
+          setPacingRemainingSec(null);
+        } else {
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        }
+      }
     }
 
+    setPacingRemainingSec(null);
     setIsTranslating(false);
 
     if (!cancelTranslationRef.current) {
@@ -866,6 +954,7 @@ export default function App() {
           tone: selectedTone,
           customPrompt,
           mode,
+          model: selectedModel,
         }),
       });
 
@@ -1123,13 +1212,15 @@ export default function App() {
           setGameMapping={handleGameMappingChange}
           hasGameFile={mode === 'game' && items.length > 0}
           batchSize={batchSize}
-          setBatchSize={setBatchSize}
+          setBatchSize={handleSetBatchSize}
           skipCodeOnly={skipCodeOnly}
           setSkipCodeOnly={setSkipCodeOnly}
           appendRTLMarkers={appendRTLMarkers}
           setAppendRTLMarkers={setAppendRTLMarkers}
+          rateLimitPacing={rateLimitPacing}
+          setRateLimitPacing={handleToggleRateLimitPacing}
           selectedModel={selectedModel}
-          setSelectedModel={setSelectedModel}
+          setSelectedModel={handleSelectModel}
         />
 
         {/* Translation Progress Bar (Shows when translating) */}
@@ -1144,9 +1235,14 @@ export default function App() {
             onPauseToggle={() => setIsPaused(!isPaused)}
             onCancel={() => {
               cancelTranslationRef.current = true;
+              setPacingRemainingSec(null);
               setIsTranslating(false);
             }}
             uiLang={uiLang}
+            selectedModel={activeRunningModel || selectedModel}
+            isFallbackActive={isFallbackActive}
+            rateLimitPacing={rateLimitPacing}
+            pacingRemainingSec={pacingRemainingSec}
           />
         )}
 

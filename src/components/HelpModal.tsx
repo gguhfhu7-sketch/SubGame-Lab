@@ -101,9 +101,6 @@ export const HelpModal: React.FC<HelpModalProps> = ({
                 <h3 className="text-base font-bold text-slate-900 dark:text-white">
                   {uiLang === 'en' ? 'SubGame Lab Guide' : uiLang === 'ar' ? 'دليل SubGame Lab' : 'راهنمای کار با نرم‌افزار SubGame Lab'}
                 </h3>
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20">
-                  v3.6 Pro
-                </span>
               </div>
               <p className="text-[11px] text-slate-500 dark:text-slate-400">
                 {uiLang === 'en' 

@@ -6,6 +6,11 @@ export const AI_MODELS: AIModelOption[] = [
     name: 'Gemini 3.6 Flash',
     badge: 'پیشنهادی / Default',
     badgeColor: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30',
+    speed: '⚡ 0.7s',
+    speedFa: '⚡ فوق‌سریع (۰.۷ ثانیه)',
+    speedEn: '⚡ Ultra Fast (0.7s)',
+    speedAr: '⚡ فائق السرعة (0.7 ثانية)',
+    reasoningLevel: 'standard',
     descriptionFa: 'بهترین تعادل سرعت بالا و کیفیت ترجمه، مصرف بهینه سهمیه API برای انواع زیرنویس و دیالوگ‌ها.',
     descriptionEn: 'Default model with optimal speed, high accuracy, and low token cost for most subtitles.',
     descriptionAr: 'النموذج الافتراضي المتوازن بين السرعة الفائقة والدقة العالية مع استهلاك أمثل لواجهة API.',
@@ -16,6 +21,11 @@ export const AI_MODELS: AIModelOption[] = [
     name: 'Gemini Live Translate',
     badge: 'پخش زنده / Stream',
     badgeColor: 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/30',
+    speed: '🔴 زنده',
+    speedFa: '🔴 پخش جریانی آنی',
+    speedEn: '🔴 Real-time Stream',
+    speedAr: '🔴 بث حي فوري',
+    reasoningLevel: 'realtime',
     descriptionFa: 'ترجمه جریانی آنی و زنده (Low-Latency Stream) سطر‌به‌سطر بدون انتظار برای اتمام کل بسته.',
     descriptionEn: 'Real-time low latency progressive streaming row-by-row directly into the grid.',
     descriptionAr: 'ترجمة فورية متدفقة حية سطرًا بسطر بدون انتظار انتهاء كامل الحزمة.',
@@ -26,6 +36,11 @@ export const AI_MODELS: AIModelOption[] = [
     name: 'Gemini 3.1 Pro',
     badge: 'استدلال بالا / Deep Reasoning',
     badgeColor: 'bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/30',
+    speed: '🧠 ۲.۱s',
+    speedFa: '🧠 استدلال عمیق (۲.۱ ثانیه)',
+    speedEn: '🧠 Deep Reasoning (2.1s)',
+    speedAr: '🧠 استدلال عميق (2.1 ثانية)',
+    reasoningLevel: 'ultra',
     descriptionFa: 'بالاترین قدرت درک متون پیچیده فانتزی/گیمینگ، حفظ لحن‌های چندلایه و کدهای حساس بازی‌ها.',
     descriptionEn: 'High-reasoning model best suited for complex fantasy lore, nuanced slang, and deep game scripts.',
     descriptionAr: 'أقوى نموذج للاستدلال وفهم نصوص الألعاب المعقدة، والسرد القصصي والأكواد الحساسة.',
@@ -36,6 +51,11 @@ export const AI_MODELS: AIModelOption[] = [
     name: 'Gemini 2.5 Pro',
     badge: 'دقت بالا / Advanced',
     badgeColor: 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/30',
+    speed: '💎 ۱.۸s',
+    speedFa: '💎 دقت ادبی (۱.۸ ثانیه)',
+    speedEn: '💎 High Accuracy (1.8s)',
+    speedAr: '💎 دقة لغوية عالية (1.8 ثانية)',
+    reasoningLevel: 'high',
     descriptionFa: 'مدل حرفه‌ای پرو برای بازنویسی دیالوگ‌های سنگین، اصطلاحات تاریخی و سناریوهای طولانی.',
     descriptionEn: 'Advanced Pro engine for heavy narrative scripts, historical lore, and strict formatting.',
     descriptionAr: 'نموذج احترافي عالي الدقة للنصوص الروائية الطويلة والمصطلحات التاريخية المعقدة.',
@@ -44,8 +64,13 @@ export const AI_MODELS: AIModelOption[] = [
   {
     id: 'gemini-2.5-flash',
     name: 'Gemini 2.5 Flash',
-    badge: 'فوق‌سریع / Ultra Fast',
+    badge: 'حجم بالا / Bulk Fast',
     badgeColor: 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/30',
+    speed: '🚀 ۰.۵s',
+    speedFa: '🚀 فوق‌سریع سبک (۰.۵ ثانیه)',
+    speedEn: '🚀 Ultra-fast Bulk (0.5s)',
+    speedAr: '🚀 خفيف وفائق السرعة (0.5 ثانية)',
+    reasoningLevel: 'standard',
     descriptionFa: 'موتور سریع پشتیبان مناسب برای ترجمه‌های حجیم زیرنویس و جایگزینی پرسرعت.',
     descriptionEn: 'Ultra-fast fallback engine for bulk subtitles and lightweight translation jobs.',
     descriptionAr: 'محرك احتياطي فائق السرعة مناسب للترجمات الضخمة للملفات البسيطة.',
@@ -197,7 +222,7 @@ Welcome to the <i>Universal Subtitle Translator</i>!
 
 2
 00:00:05,000 --> 00:00:08,200
-This system uses <b>Gemini 3.6 Flash</b> for lightning-fast translations.
+This system uses <b>Gemini AI Engine</b> for lightning-fast translations.
 
 3
 00:00:09,100 --> 00:00:13,800

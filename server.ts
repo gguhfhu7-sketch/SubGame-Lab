@@ -88,7 +88,7 @@ function getClientKeysFromHeader(req: express.Request): string[] {
   return [];
 }
 
-// Helper function to execute Gemini requests with multi-key rotation, model fallback, and rate-limit backoff
+// Helper function to execute Gemini requests with multi-key rotation, intelligent model fallback, and rate-limit backoff
 async function callGeminiWithRetryAndFallback(
   apiKeys: string[],
   generateParams: {
@@ -96,7 +96,7 @@ async function callGeminiWithRetryAndFallback(
     config?: any;
   },
   preferredModel?: string
-) {
+): Promise<{ response: any; modelUsed: string; isFallback: boolean }> {
   const rawKeys = apiKeys.length > 0 ? apiKeys : [];
   const keysToTry: string[] = [];
   rawKeys.forEach((k) => {
@@ -117,18 +117,19 @@ async function callGeminiWithRetryAndFallback(
     throw new Error('کلید API جمینای تنظیم نشده است. لطفاً کلید API خود را وارد کنید.');
   }
 
-  // Base fallback models list
-  const defaultModels = ['gemini-3.6-flash', 'gemini-3.1-pro', 'gemini-2.5-pro', 'gemini-2.5-flash'];
-  const models: string[] = [];
+  // Optimized fallback order based on the user's selected model archetype
+  let models: string[] = [];
+  const targetModel = preferredModel && preferredModel !== 'gemini-live-stream' ? preferredModel : 'gemini-3.6-flash';
 
-  if (preferredModel && preferredModel !== 'gemini-live-stream') {
-    models.push(preferredModel);
+  if (targetModel === 'gemini-3.1-pro') {
+    models = ['gemini-3.1-pro', 'gemini-3.6-flash', 'gemini-2.5-pro', 'gemini-2.5-flash'];
+  } else if (targetModel === 'gemini-2.5-pro') {
+    models = ['gemini-2.5-pro', 'gemini-3.6-flash', 'gemini-3.1-pro', 'gemini-2.5-flash'];
+  } else if (targetModel === 'gemini-2.5-flash') {
+    models = ['gemini-2.5-flash', 'gemini-3.6-flash', 'gemini-2.5-pro', 'gemini-3.1-pro'];
+  } else {
+    models = ['gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-3.1-pro', 'gemini-2.5-pro'];
   }
-  defaultModels.forEach((m) => {
-    if (!models.includes(m)) {
-      models.push(m);
-    }
-  });
 
   let lastError: any = null;
 
@@ -157,7 +158,9 @@ async function callGeminiWithRetryAndFallback(
             contents: generateParams.contents,
             config: generateParams.config,
           });
-          return response;
+          
+          const isFallback = Boolean(modelName !== targetModel);
+          return { response, modelUsed: modelName, isFallback };
         } catch (err: any) {
           const msg = err?.message || String(err);
           const is404 = msg.includes('404') || msg.toLowerCase().includes('not found');
@@ -172,25 +175,25 @@ async function callGeminiWithRetryAndFallback(
             msg.toLowerCase().includes('resource_exhausted');
 
           if (isRateLimit) {
-            // 1. If we have more API keys, failover to the next key immediately
+            // 1. If we have more API keys, failover to the next key immediately for current model
             if (kIdx < keysToTry.length - 1) {
-              console.warn(`[Gemini Rate Limit] Key #${kIdx + 1} exhausted quota. Switching to Key #${kIdx + 2}...`);
+              console.warn(`[Gemini Rate Limit] Key #${kIdx + 1} exhausted quota for ${modelName}. Switching to Key #${kIdx + 2}...`);
               break; // exit model loop to try next key in outer loop
             }
 
-            // 2. If we have more models to try, failover to the next model immediately
+            // 2. If we have more models to try, failover to the next tier model immediately
             if (mIdx < models.length - 1 && attempts >= 1) {
               console.warn(`[Gemini Rate Limit] Model ${modelName} rate limited. Falling back to ${models[mIdx + 1]}...`);
               break; // exit attempts loop to try next model in inner loop
             }
 
             // 3. Otherwise wait for requested retry duration or exponential backoff
-            let delayMs = 5000;
+            let delayMs = 4000;
             const match = msg.match(/retry in ([0-9.]+)s/i);
             if (match && match[1]) {
               const parsedSec = parseFloat(match[1]);
               if (!isNaN(parsedSec) && parsedSec > 0) {
-                delayMs = Math.min(Math.ceil(parsedSec * 1000) + 1000, 65000);
+                delayMs = Math.min(Math.ceil(parsedSec * 1000) + 1000, 60000);
               }
             }
             console.warn(`[Gemini Rate Limit] Model: ${modelName}, Key: #${kIdx + 1}, Attempt: ${attempts}/${maxAttemptsPerModel}. Waiting ${Math.round(delayMs / 1000)}s...`);
@@ -256,7 +259,7 @@ ${mode === 'game' ? 'Operational Mode: Video Game Localization Engine (Dialogue,
     const promptText = `Translate the following ${items.length} ${mode === 'game' ? 'game strings' : 'subtitle lines'} into ${targetLanguage} (Source language: ${sourceLanguage || 'Auto-detect'}):\n` +
       JSON.stringify(items, null, 2);
 
-    const response = await callGeminiWithRetryAndFallback(apiKeys, {
+    const { response, modelUsed, isFallback } = await callGeminiWithRetryAndFallback(apiKeys, {
       contents: promptText,
       config: {
         systemInstruction,
@@ -308,12 +311,15 @@ ${mode === 'game' ? 'Operational Mode: Video Game Localization Engine (Dialogue,
     }, model);
 
     const responseText = response.text || '{}';
-    let parsedData;
+    let parsedData: any;
     try {
       parsedData = JSON.parse(responseText);
     } catch {
       return res.status(500).json({ error: 'خطا در قالب‌بندی پاسخ هوش مصنوعی.' });
     }
+
+    parsedData.modelUsed = modelUsed;
+    parsedData.isFallback = isFallback;
 
     return res.json(parsedData);
   } catch (err: unknown) {
@@ -585,7 +591,7 @@ AUDIT RULES:
         2
       );
 
-    const response = await callGeminiWithRetryAndFallback(apiKeys, {
+    const { response, modelUsed } = await callGeminiWithRetryAndFallback(apiKeys, {
       contents: promptText,
       config: {
         systemInstruction,
@@ -608,7 +614,7 @@ AUDIT RULES:
           required: ['reviewedItems'],
         },
       },
-    });
+    }, req.body.model);
 
     const parsedData = JSON.parse(response.text || '{}');
     const reviewedItems = parsedData.reviewedItems || [];
@@ -632,6 +638,7 @@ AUDIT RULES:
       lineCountMatch: reviewedItems.length === items.length,
       refinedCount,
       untranslatedFixedCount,
+      modelUsed,
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Error during translation quality audit.';
@@ -649,7 +656,7 @@ app.post('/api/detect-language', async (req, res) => {
     }
 
     const apiKeys = getClientKeysFromHeader(req);
-    const response = await callGeminiWithRetryAndFallback(apiKeys, {
+    const { response } = await callGeminiWithRetryAndFallback(apiKeys, {
       contents: `Identify the primary language of this subtitle snippet. Return a JSON object with keys "language" (English name e.g. "English", "French", "Japanese") and "languageFa" (Persian name e.g. "انگلیسی", "فرانسوی", "ژاپنی").\n\nSnippet:\n${sampleText.slice(0, 1000)}`,
       config: {
         responseMimeType: 'application/json',
@@ -702,7 +709,7 @@ CRITICAL INSTRUCTIONS:
       ? `[HIGH ACCURACY PHONETIC RE-EVALUATION] Transcribe the speech with meticulous attention to phonetic detail, accents, and context into SRT format. ${targetLanguage ? `Translate or write transcript in ${targetLanguage}.` : 'Keep transcript in original spoken language.'}`
       : `Transcribe the audio speech into precise SRT subtitle format. ${targetLanguage ? `Translate or write transcript in ${targetLanguage}.` : 'Keep transcript in original spoken language.'}`;
 
-    const response = await callGeminiWithRetryAndFallback(apiKeys, {
+    const { response } = await callGeminiWithRetryAndFallback(apiKeys, {
       contents: [
         {
           inlineData: {
