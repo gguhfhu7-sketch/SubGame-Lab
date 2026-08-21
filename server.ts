@@ -8,15 +8,27 @@ import { createServer as createViteServer } from 'vite';
 
 dotenv.config();
 
-// Safe _dirname resolution compatible with both ESM and compiled CommonJS (dist/server.cjs)
+// Safe _dirname resolution compatible with both ESM (tsx) and compiled CommonJS (dist/server.cjs)
 const _dirname = typeof __dirname !== 'undefined'
   ? __dirname
-  : (import.meta && import.meta.url ? path.dirname(fileURLToPath(import.meta.url)) : process.cwd());
+  : process.cwd();
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 
+// Enable CORS and parse JSON/URL-encoded bodies
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-gemini-api-key, x-gemini-api-keys');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
+
 app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // Lazy initializer for GoogleGenAI
 function getGenAIClient(customApiKey?: string): GoogleGenAI {
@@ -856,31 +868,60 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() });
 });
 
+// Helper to reliably locate the dist directory with index.html
+function locateDistDirectory(): string {
+  const currentDir = typeof __dirname !== 'undefined' ? __dirname : process.cwd();
+  const candidates = [
+    currentDir, // If server.cjs is in dist/, currentDir already contains index.html
+    path.join(process.cwd(), 'dist'),
+    path.join(currentDir, 'dist'),
+    path.join(currentDir, '..', 'dist'),
+    process.cwd(),
+  ];
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(path.join(candidate, 'index.html'))) {
+      return candidate;
+    }
+  }
+
+  return path.join(process.cwd(), 'dist');
+}
+
 // Setup Vite development server or serve static assets in production
 async function startServer() {
-  if (process.env.NODE_ENV !== 'production') {
+  const isCjsBundle = typeof __filename !== 'undefined' && typeof __filename === 'string' && __filename.endsWith('.cjs');
+  const isProduction = process.env.NODE_ENV === 'production' || isCjsBundle;
+
+  if (!isProduction) {
+    console.log('[Server] Starting in DEVELOPMENT mode with Vite middleware...');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
     });
     app.use(vite.middlewares);
   } else {
-    let distPath = path.join(process.cwd(), 'dist');
-    if (!fs.existsSync(distPath)) {
-      distPath = path.join(_dirname, 'dist');
-    }
-    if (!fs.existsSync(distPath)) {
-      distPath = path.join(_dirname, '../dist');
-    }
-    console.log(`Serving static files from: ${distPath}`);
-    app.use(express.static(distPath));
+    const distDir = locateDistDirectory();
+    console.log(`[Server] Starting in PRODUCTION mode. Serving assets from: ${distDir}`);
+    app.use(express.static(distDir));
+
+    // SPA fallback: Return index.html for non-API routes
     app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
+      if (req.path.startsWith('/api/')) {
+        return res.status(404).json({ error: 'Endpoint not found' });
+      }
+
+      const indexPath = path.join(distDir, 'index.html');
+      if (fs.existsSync(indexPath)) {
+        res.sendFile(indexPath);
+      } else {
+        res.status(500).send(`Application build files (index.html) not found in: ${distDir}. Please ensure "npm run build" has finished.`);
+      }
     });
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server listening on http://0.0.0.0:${PORT}`);
+    console.log(`🚀 Server listening on http://0.0.0.0:${PORT} (PID: ${process.pid})`);
   });
 }
 
