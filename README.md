@@ -14,6 +14,7 @@
 *   **Live Online Demo**: [subgame-lab-production.up.railway.app](https://subgame-lab-production.up.railway.app/)
 *   **Local Dev URL**: `http://localhost:3000`
 *   **Official Telegram Community & Announcements**: [t.me/MySaeedLab](https://t.me/MySaeedLab)
+*   **Project Introduction Video**: [youtu.be/4cSHIzVGA20](https://youtu.be/4cSHIzVGA20)
 
 ---
 
@@ -106,6 +107,7 @@ To run the application locally on your machine:
 *   **دمو آنلاین و زنده**: [subgame-lab-production.up.railway.app](https://subgame-lab-production.up.railway.app/)
 *   **آدرس توسعه محلی**: `http://localhost:3000`
 *   **جامعه و کانال تلگرام رسمی**: [t.me/MySaeedLab](https://t.me/MySaeedLab)
+*   **ویدیو معرفی پروژه**: [youtu.be/4cSHIzVGA20](https://youtu.be/4cSHIzVGA20)
 
 ---
 
@@ -198,6 +200,7 @@ To run the application locally on your machine:
 *   **العرض التجريبي المباشر**: [subgame-lab-production.up.railway.app](https://subgame-lab-production.up.railway.app/)
 *   **رابط التطوير المحلي**: `http://localhost:3000`
 *   **مجتمع وقناة تليجرام الرسمية**: [t.me/MySaeedLab](https://t.me/MySaeedLab)
+*   **فيديو تعريفي بالمشروع**: [youtu.be/4cSHIzVGA20](https://youtu.be/4cSHIzVGA20)
 
 ---
 
