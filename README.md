@@ -107,9 +107,33 @@ npm run build   # Frontend + server bundle
 npm start       # Production server
 ```
 
-### Self-hosting, network access, and privacy
+### Deploy the online version
 
-For Railway or another Node.js host, connect your repository, install dependencies, build with `npm run build`, and start with `npm start`. Configure environment variables and expose the host-assigned port. Configure a public domain using the hosting dashboard.
+For the hosted version, users do **not** need to run `npm run build`, `npm start`, or configure a local port. The repository owner or deployer only needs to fork the project and connect that fork to the hosting platform. The platform installs dependencies, builds the project, starts the server, and provides the public URL.
+
+The online deployment should listen on the platform-provided `PORT` environment variable. For the current deployment setup, use port `8080` when the platform asks for an application port. Do not hard-code a different port in the hosting dashboard. After deployment, open the generated public domain and configure Gemini or Custom Provider from the app itself.
+
+**Online deployment flow:**
+
+1. Fork the SubGame Lab repository.
+2. Create a new service/project on the hosting platform from your fork.
+3. Set the application port to `8080` if the platform requires a manual port setting.
+4. Let the platform run its normal install, build, and start workflow.
+5. Open the generated public URL and use the application.
+
+`npm run build` is mainly for local verification or a custom deployment pipeline. It is not a step that ordinary users need to run after opening the live demo. The platform still has to build the application internally before serving it.
+
+For a custom Node.js host, use the repository's production commands only when the host does not automatically detect and run the project workflow:
+
+```bash
+npm install
+npm run build
+npm start
+```
+
+The server uses the host-provided `PORT` value and falls back to `3000` only when no port is supplied. If your hosting provider assigns `8080`, the application listens on `8080`.
+
+### Network access and privacy
 
 API calls are sent by the application server. For a hosted deployment, the server must reach the selected provider; for local development, your local Node.js process must reach it. Proxy/VPN requirements depend on routing and provider restrictions: the hosted demo does not guarantee access in every region. Use services available to you under their terms; multiple keys do not remove provider quotas.
 
@@ -218,13 +242,37 @@ npm start
 
 دستور اول بررسی TypeScript، دستور دوم ساخت فرانت‌اند و سرور، و دستور سوم اجرای نسخهٔ ساخته‌شده است.
 
-### میزبانی، شبکه و حریم خصوصی
+### استقرار نسخهٔ آنلاین
 
-برای Railway یا میزبان Node.js دیگر، مخزن را متصل کنید، وابستگی‌ها را نصب کنید، دستور ساخت را `npm run build` و اجرای برنامه را `npm start` قرار دهید. متغیرهای محیطی، پورت میزبان و دامنهٔ عمومی را از داشبورد میزبانی تنظیم کنید.
+برای نسخهٔ آنلاین، کاربر عادی نیازی به اجرای `npm run build`، `npm start` یا تنظیم پورت روی سیستم خودش ندارد. صاحب پروژه فقط مخزن را fork می‌کند و fork را به سرویس میزبانی متصل می‌کند. پلتفرم میزبانی نصب وابستگی‌ها، build، اجرای سرور و ساخت URL عمومی را انجام می‌دهد.
 
-درخواست API از سمت سرور برنامه ارسال می‌شود. در نسخهٔ آنلاین، سرور میزبان باید به سرویس دسترسی داشته باشد؛ در نسخهٔ محلی، پردازش Node.js روی سیستم شما باید به آن برسد. نیاز به پراکسی یا ابزار مسیریابی به محدودیت‌های سرویس و شبکه بستگی دارد؛ دمو آنلاین تضمین دسترسی در همهٔ کشورها نیست. از سرویس‌های در دسترس و مطابق شرایط استفادهٔ آنها بهره ببرید؛ چند کلید، سهمیه‌های سرویس را حذف نمی‌کند.
+نسخهٔ آنلاین باید از مقدار پورت محیط میزبانی استفاده کند. در تنظیمات استقرار فعلی، اگر پلتفرم پورت دستی خواست، پورت `8080` را وارد کنید. پورت دیگری را در داشبورد hard-code نکنید. بعد از deploy، URL عمومی ساخته‌شده را باز کنید و Gemini یا Custom Provider را از داخل خود برنامه تنظیم کنید.
 
-کلیدهای BYOK در localStorage مرورگر ذخیره و برای درخواست‌ها به بک‌اند برنامه ارسال می‌شوند. نشست‌ها در IndexedDB نگه‌داری می‌شوند. از نسخهٔ میزبانی‌شدهٔ مورداعتماد استفاده کنید، روی دستگاه مشترک کلید ذخیره نکنید و مرتب خروجی پشتیبان بگیرید. پاک‌کردن داده‌های سایت می‌تواند نشست‌ها و کلیدها را حذف کند. پیش از انتشار عمومی، احراز هویت، سقف هزینه/درخواست، دسترسی خروجی شبکه و الزامات حریم خصوصی را بررسی کنید؛ حفاظت‌های فعلی جای ممیزی امنیتی کامل را نمی‌گیرند.
+**مراحل استقرار آنلاین:**
+
+1. مخزن SubGame Lab را fork کنید.
+2. در پلتفرم میزبانی یک سرویس یا پروژهٔ جدید از روی fork بسازید.
+3. اگر پلتفرم تنظیم دستی پورت دارد، پورت `8080` را وارد کنید.
+4. اجازه دهید پلتفرم روند نصب، build و اجرای پروژه را خودش انجام دهد.
+5. URL عمومی ساخته‌شده را باز کنید و از برنامه استفاده کنید.
+
+دستور `npm run build` بیشتر برای بررسی محلی یا pipeline سفارشی است. کاربر معمولی بعد از بازکردن دمو نیازی به اجرای آن ندارد. البته خود پلتفرم در پشت‌صحنه باید پروژه را build کند تا بتواند آن را ارائه دهد.
+
+برای یک سرور Node.js سفارشی، فقط وقتی این دستورات را اجرا کنید که میزبان روند پروژه را خودکار تشخیص نمی‌دهد:
+
+```bash
+npm install
+npm run build
+npm start
+```
+
+سرور از مقدار `PORT` که میزبان تعیین می‌کند استفاده می‌کند و فقط وقتی پورتی از محیط دریافت نکند به `3000` برمی‌گردد. بنابراین اگر میزبان `8080` اختصاص دهد، برنامه روی `8080` گوش می‌دهد.
+
+### شبکه و حریم خصوصی
+
+درخواست‌های API از سمت سرور برنامه ارسال می‌شوند. در نسخهٔ میزبانی‌شده، سرور باید به سرویس انتخابی دسترسی داشته باشد؛ در نسخهٔ محلی، Node.js روی سیستم شما باید به آن سرویس برسد. نیاز به پراکسی یا ابزار مسیریابی به محدودیت سرویس و شبکه بستگی دارد؛ دمو آنلاین دسترسی در همهٔ مناطق را تضمین نمی‌کند. از سرویس‌ها مطابق شرایط استفادهٔ خودشان بهره ببرید؛ چند کلید سهمیهٔ ارائه‌دهنده را حذف نمی‌کند.
+
+کلیدهای BYOK در localStorage مرورگر ذخیره و برای درخواست‌ها به بک‌اند برنامه ارسال می‌شوند. نشست‌ها در IndexedDB نگه‌داری می‌شوند. از نسخهٔ میزبانی‌شدهٔ مورداعتماد استفاده کنید، روی دستگاه مشترک کلید ذخیره نکنید و مرتب خروجی پشتیبان بگیرید. پاک‌کردن داده‌های سایت می‌تواند نشست‌ها و کلیدها را حذف کند. پیش از انتشار عمومی، احراز هویت، سقف هزینه و درخواست، کنترل دسترسی خروجی شبکه و الزامات حریم خصوصی را بررسی کنید؛ حفاظت‌های فعلی جای ممیزی امنیتی کامل را نمی‌گیرند.
 
 **فناوری‌های فعلی:** React 19، TypeScript، Vite 6، Tailwind CSS 4، Express، `@google/genai`، TanStack Virtual، Dexie/IndexedDB، ExcelJS، PapaParse و jschardet. کارایی به فایل و دستگاه وابسته است و تضمین ثابت ۵۰هزار ردیف با ۶۰ فریم ارائه نمی‌شود.
 
@@ -323,13 +371,37 @@ npm start
 
 الأول لفحص TypeScript، والثاني لبناء الواجهة والخادم، والثالث لتشغيل نسخة الإنتاج.
 
-### الاستضافة والشبكة والخصوصية
+### نشر النسخة الإلكترونية
 
-على Railway أو مضيف Node.js آخر، اربط المستودع وثبّت الاعتماديات واضبط أمر البناء على `npm run build` وأمر التشغيل على `npm start`. أضف متغيرات البيئة واضبط المنفذ والنطاق من لوحة الاستضافة.
+في النسخة الإلكترونية، لا يحتاج المستخدم العادي إلى تشغيل `npm run build` أو `npm start` أو ضبط منفذ على جهازه. يقوم صاحب المشروع بعمل fork للمستودع وربطه بمنصة الاستضافة. تتولى المنصة تثبيت الاعتماديات وبناء المشروع وتشغيل الخادم وإنشاء الرابط العام.
 
-تخرج طلبات API من خادم التطبيق. يجب أن يصل المضيف إلى المزود في النسخة المنشورة، أو أن تصل عملية Node.js المحلية إليه عند التشغيل محلياً. تعتمد الحاجة إلى بروكسي أو توجيه خاص على الشبكة وقيود المزود؛ العرض المباشر ليس ضماناً للوصول من كل المناطق. استخدم الخدمات المتاحة لك وفق شروطها؛ المفاتيح المتعددة لا تلغي الحصص.
+يجب أن يستمع النشر الإلكتروني إلى قيمة `PORT` التي توفرها منصة الاستضافة. في إعداد النشر الحالي، استخدم المنفذ `8080` إذا طلبت المنصة ضبط منفذ يدوياً. لا تضع منفذاً مختلفاً بشكل ثابت في لوحة الاستضافة. بعد النشر، افتح الرابط العام واضبط Gemini أو Custom Provider من داخل التطبيق.
 
-تُحفظ مفاتيح BYOK في localStorage وتُرسل إلى خلفية التطبيق لتنفيذ الطلبات. تُحفظ الجلسات في IndexedDB. استخدم استضافة موثوقة، ولا تحفظ المفاتيح على أجهزة مشتركة، وصدّر العمل المهم بانتظام. قد يؤدي مسح بيانات الموقع إلى حذف الجلسات والمفاتيح. قبل النشر العام، راجع المصادقة وحدود التكلفة والطلبات وضوابط اتصالات الشبكة الصادرة ومتطلبات الخصوصية؛ الحماية المضمنة ليست تدقيقاً أمنياً شاملاً.
+**خطوات النشر الإلكتروني:**
+
+1. اعمل fork لمستودع SubGame Lab.
+2. أنشئ خدمة أو مشروعاً جديداً من الـ fork في منصة الاستضافة.
+3. إذا كانت المنصة تطلب منفذاً يدوياً، أدخل `8080`.
+4. اترك المنصة تنفذ التثبيت والبناء والتشغيل تلقائياً.
+5. افتح الرابط العام الناتج واستخدم التطبيق.
+
+يُستخدم الأمر `npm run build` أساساً للتحقق المحلي أو لخط نشر مخصص. لا يحتاج المستخدم العادي إلى تشغيله بعد فتح العرض المباشر، لكن منصة الاستضافة تنفذ البناء داخلياً قبل تقديم التطبيق.
+
+على مضيف Node.js مخصص، استخدم الأوامر التالية فقط عندما لا يكتشف المضيف سير عمل المشروع تلقائياً:
+
+```bash
+npm install
+npm run build
+npm start
+```
+
+يستخدم الخادم قيمة `PORT` التي يحددها المضيف، ويعود إلى `3000` فقط عندما لا تصله قيمة منفذ. إذا خصص المضيف `8080` فسيستمع التطبيق على `8080`.
+
+### الشبكة والخصوصية
+
+تخرج طلبات API من خادم التطبيق. يجب أن يصل المضيف إلى المزود في النسخة المنشورة، أو أن تصل عملية Node.js المحلية إليه عند التشغيل المحلي. تعتمد الحاجة إلى بروكسي أو توجيه خاص على الشبكة وقيود المزود؛ العرض المباشر ليس ضماناً للوصول من كل المناطق. استخدم الخدمات وفق شروطها؛ المفاتيح المتعددة لا تلغي الحصص.
+
+تُحفظ مفاتيح BYOK في localStorage وتُرسل إلى خلفية التطبيق لتنفيذ الطلبات. تُحفظ الجلسات في IndexedDB. استخدم استضافة موثوقة، ولا تحفظ المفاتيح على أجهزة مشتركة، وصدّر العمل المهم بانتظام. قد يؤدي مسح بيانات الموقع إلى حذف الجلسات والمفاتيح. قبل النشر العام، راجع المصادقة وحدود التكلفة والطلبات وضوابط الاتصالات الصادرة ومتطلبات الخصوصية؛ الحماية المضمنة ليست تدقيقاً أمنياً شاملاً.
 
 **التقنيات الحالية:** React 19، TypeScript، Vite 6، Tailwind CSS 4، Express، `@google/genai`، TanStack Virtual، Dexie/IndexedDB، ExcelJS، PapaParse وjschardet. يعتمد الأداء على الملف والجهاز؛ لا يوجد وعد ثابت بعرض 50,000 صف بسرعة 60 إطاراً في الثانية.
 
