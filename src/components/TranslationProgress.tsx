@@ -1,7 +1,7 @@
 import React from 'react';
 import { UILanguage, TRANSLATIONS } from '../lib/i18n';
 import { AI_MODELS } from '../constants';
-import { AIModelId } from '../types';
+import { AIModelId, AIProvider, CustomProviderConfig } from '../types';
 import { 
   Pause, 
   Play, 
@@ -12,8 +12,10 @@ import {
   BrainCircuit, 
   Sparkles, 
   Flame,
+  Gauge,
   ShieldAlert,
-  Clock
+  Clock,
+  Server
 } from 'lucide-react';
 
 interface TranslationProgressProps {
@@ -26,7 +28,9 @@ interface TranslationProgressProps {
   onCancel: () => void;
   retryInfo?: { batch: number; attempt: number; maxRetries: number } | null;
   uiLang: UILanguage;
-  selectedModel?: AIModelId;
+  selectedModel?: string;
+  activeProvider?: AIProvider;
+  customProviderConfig?: CustomProviderConfig;
   isFallbackActive?: boolean;
   rateLimitPacing?: boolean;
   pacingRemainingSec?: number | null;
@@ -43,6 +47,8 @@ export const TranslationProgress: React.FC<TranslationProgressProps> = ({
   retryInfo,
   uiLang,
   selectedModel = 'gemini-3.6-flash',
+  activeProvider = 'gemini',
+  customProviderConfig,
   isFallbackActive = false,
   rateLimitPacing = false,
   pacingRemainingSec = null,
@@ -50,18 +56,45 @@ export const TranslationProgress: React.FC<TranslationProgressProps> = ({
   const percentage = totalLines > 0 ? Math.min(100, Math.round((translatedLines / totalLines) * 100)) : 0;
   const t = TRANSLATIONS[uiLang];
 
-  const currentModelInfo = AI_MODELS.find((m) => m.id === selectedModel) || AI_MODELS[0];
+  const isCustom = activeProvider === 'custom' || (!AI_MODELS.some((m) => m.id === selectedModel) && !!selectedModel);
+  const customModelName = customProviderConfig?.model?.trim() || selectedModel || 'Custom Model';
+
+  let modelDisplayName = '';
+  let modelBadge = '';
+  let modelBadgeColor = '';
+
+  if (isCustom && !isFallbackActive) {
+    modelDisplayName = customModelName;
+    modelBadge = customProviderConfig?.name?.trim() 
+      ? `BYOK: ${customProviderConfig.name}` 
+      : (uiLang === 'en' ? 'Custom Provider' : uiLang === 'ar' ? 'مزود مخصص' : 'سرویس‌دهنده سفارشی');
+    modelBadgeColor = 'bg-purple-500/20 text-purple-300 border-purple-500/40';
+  } else {
+    const foundModel = AI_MODELS.find((m) => m.id === selectedModel) || AI_MODELS[0];
+    modelDisplayName = foundModel.name;
+    modelBadge = foundModel.badge;
+    modelBadgeColor = foundModel.badgeColor;
+  }
 
   const getModelIcon = (id?: string) => {
+    if (isCustom && !isFallbackActive) {
+      return <Server className="w-5 h-5 text-purple-400" />;
+    }
     switch (id) {
       case 'gemini-live-stream':
         return <Radio className="w-5 h-5 text-rose-400 animate-pulse" />;
+      case 'gemini-3.1-pro-preview':
       case 'gemini-3.1-pro':
-        return <BrainCircuit className="w-5 h-5 text-purple-400" />;
       case 'gemini-2.5-pro':
-        return <Sparkles className="w-5 h-5 text-indigo-400" />;
-      case 'gemini-2.5-flash':
-        return <Flame className="w-5 h-5 text-blue-400" />;
+        return <BrainCircuit className="w-5 h-5 text-purple-400" />;
+      case 'gemini-3.8-flash':
+        return <Sparkles className="w-5 h-5 text-emerald-400" />;
+      case 'gemini-3.7-flash':
+        return <Zap className="w-5 h-5 text-teal-400" />;
+      case 'gemini-3.1-flash-lite':
+        return <Gauge className="w-5 h-5 text-amber-400" />;
+      case 'gemini-3.5-flash':
+        return <Flame className="w-5 h-5 text-cyan-400" />;
       case 'gemini-3.6-flash':
       default:
         return <Zap className="w-5 h-5 text-emerald-400" />;
@@ -86,15 +119,15 @@ export const TranslationProgress: React.FC<TranslationProgressProps> = ({
           <div>
             <div className="flex items-center gap-2 flex-wrap">
               <h3 className="text-sm font-bold text-white flex items-center gap-2 flex-wrap">
-                <span>{t.translatingProgress} {currentModelInfo.name}</span>
+                <span>{t.translatingProgress} {modelDisplayName}</span>
               </h3>
               {isFallbackActive && (
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40">
                   {uiLang === 'en' ? '(Fallback Active)' : uiLang === 'ar' ? '(محرك احتياطي نشط)' : '(موتور پشتیبان فعال)'}
                 </span>
               )}
-              <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${currentModelInfo.badgeColor}`}>
-                {currentModelInfo.badge}
+              <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${modelBadgeColor}`}>
+                {modelBadge}
               </span>
               <span className="text-[10px] font-mono font-extrabold px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300">
                 {percentage}%

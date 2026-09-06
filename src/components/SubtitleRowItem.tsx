@@ -182,9 +182,20 @@ export const SubtitleRowItem = React.memo<SubtitleRowItemProps>(({
               }`}
             />
             {missingVars.length > 0 && (
-              <div className="flex items-center gap-1 text-[10px] text-amber-600 dark:text-amber-400">
+              <div className="flex flex-wrap items-center gap-1 text-[10px] text-amber-600 dark:text-amber-400 mt-1">
                 <AlertTriangle className="w-3 h-3 shrink-0" />
-                <span>{uiLang === 'en' ? 'Missing variable(s):' : 'متغیرهای جاافتاده:'} {missingVars.join(', ')}</span>
+                <span>{uiLang === 'en' ? 'Missing variable(s):' : 'متغیرهای جاافتاده:'}</span>
+                {missingVars.map((v) => (
+                  <button
+                    key={v}
+                    type="button"
+                    onClick={() => onItemChange(item.id, (item.translatedText ? item.translatedText + ' ' : '') + v)}
+                    className="px-1.5 py-0.5 font-mono text-[9px] bg-amber-100 hover:bg-amber-200 dark:bg-amber-900/60 dark:hover:bg-amber-800 text-amber-800 dark:text-amber-200 rounded border border-amber-300 dark:border-amber-700 transition-colors cursor-pointer"
+                    title={uiLang === 'en' ? `Click to append ${v}` : `کلیک برای افزودن ${v}`}
+                  >
+                    +{v}
+                  </button>
+                ))}
               </div>
             )}
           </div>

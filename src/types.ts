@@ -6,9 +6,80 @@ export type AppMode = 'cinema' | 'game';
 
 export type TranslationMethod = 'batch' | 'stream';
 
+export type AIProvider = 'gemini' | 'custom';
+
+export type CustomProviderErrorType =
+  | 'timeout'
+  | 'rate_limit'
+  | 'auth_failure'
+  | 'model_not_found'
+  | 'endpoint_not_found'
+  | 'truncated_response'
+  | 'malformed_json'
+  | 'missing_translations'
+  | 'response_too_large'
+  | 'request_too_large'
+  | 'cancelled'
+  | 'network_error'
+  | 'ssrf_blocked'
+  | 'provider_error'
+  | 'service_unavailable'
+  | 'gateway_timeout'
+  | 'invalid_config';
+
+export interface CustomProviderTimingTelemetry {
+  request_start: number;
+  provider_fetch_start?: number;
+  provider_headers_received?: number;
+  provider_body_start?: number;
+  provider_body_complete?: number;
+  provider_json_parsed?: number;
+  response_sent?: number;
+  request_complete?: number;
+  elapsed_ms?: number;
+  status?: number;
+  response_bytes?: number;
+  provider_host?: string;
+  model?: string;
+  batch_size?: number;
+  retry_number?: number;
+  timeout_reason?: string;
+}
+
+export interface CustomProviderConfig {
+  name?: string;
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}
+
+export interface CustomProviderTestResult {
+  success: boolean;
+  error?: string;
+  errorType?: 
+    | 'invalid_key' 
+    | 'auth_failed' 
+    | 'model_not_found' 
+    | 'endpoint_not_found' 
+    | 'rate_limit' 
+    | 'provider_error' 
+    | 'network_error' 
+    | 'invalid_response' 
+    | 'timeout' 
+    | 'invalid_url';
+  latencyMs?: number;
+  modelResponded?: string;
+}
+
 export type AIModelId = 
+  | 'gemini-3.8-flash'
+  | 'gemini-3.7-flash'
   | 'gemini-3.6-flash'
+  | 'gemini-3.5-flash'
+  | 'gemini-3.1-flash-lite'
+  | 'gemini-3.1-pro-preview'
   | 'gemini-live-stream'
+  | 'gemini-3.5-transcribe'
   | 'gemini-3.1-pro'
   | 'gemini-2.5-pro'
   | 'gemini-2.5-flash';
@@ -27,6 +98,12 @@ export interface AIModelOption {
   descriptionEn: string;
   descriptionAr: string;
   isStreaming?: boolean;
+  requiresPaidTier?: boolean;
+  status?: 'stable' | 'preview' | 'deprecated';
+  quality?: string;
+  costTier?: 'ultra_low' | 'standard' | 'paid_premium';
+  recommendedUseCase?: string;
+  displayLabel?: string;
 }
 
 export type SubtitleFormat = 'srt' | 'vtt' | 'ass' | 'ssa' | 'sub';
@@ -153,6 +230,32 @@ export interface AdvancedSettings {
   appendRTLMarkers: boolean;
   rateLimitPacing: boolean;
   pacingDelaySeconds?: number;
+}
+
+export interface ModeSessionState {
+  fileName: string;
+  fileSize: number;
+  sourceFormat: SubtitleFormat | GameFormat;
+  targetFormat: SubtitleFormat | GameFormat;
+  rawHeader?: string;
+  selectedEncoding: string;
+  detectedEncoding: string;
+  items: SubtitleItem[];
+  gameColumns: string[];
+  gameMapping: GameColumnMapping;
+  gameOriginalStructure: any;
+  sourceLanguage: string;
+  detectedSourceLang: string;
+  targetLanguage: string;
+  selectedTone: ToneOption;
+  customPrompt: string;
+  isTranslating: boolean;
+  isPaused: boolean;
+  currentBatch: number;
+  totalBatches: number;
+  translatedCount: number;
+  activeJobId?: string;
+  lastUploadedBuffer?: { buffer: ArrayBuffer; name: string; size: number } | null;
 }
 
 

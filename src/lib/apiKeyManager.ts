@@ -1,3 +1,5 @@
+import { AIProvider, CustomProviderConfig } from '../types';
+
 export interface StoredApiKey {
   id: string;
   label: string;
@@ -9,6 +11,59 @@ export interface StoredApiKey {
 
 const LOCAL_STORAGE_KEYS_LIST = 'gemini_api_keys_v2';
 const LOCAL_STORAGE_SINGLE_KEY = 'gemini_api_key';
+const LOCAL_STORAGE_AI_PROVIDER = 'subgame_ai_provider';
+const LOCAL_STORAGE_CUSTOM_PROVIDER = 'subgame_custom_provider_config';
+
+export function getActiveAiProvider(): AIProvider {
+  try {
+    const val = localStorage.getItem(LOCAL_STORAGE_AI_PROVIDER);
+    if (val === 'custom') return 'custom';
+  } catch (err) {
+    console.error('Failed to parse AI provider from localStorage:', err);
+  }
+  return 'gemini';
+}
+
+export function setActiveAiProvider(provider: AIProvider): void {
+  try {
+    localStorage.setItem(LOCAL_STORAGE_AI_PROVIDER, provider);
+  } catch (err) {
+    console.error('Failed to save AI provider to localStorage:', err);
+  }
+}
+
+export function getStoredCustomProvider(): CustomProviderConfig {
+  try {
+    const raw = localStorage.getItem(LOCAL_STORAGE_CUSTOM_PROVIDER);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        return {
+          name: typeof parsed.name === 'string' ? parsed.name : '',
+          baseUrl: typeof parsed.baseUrl === 'string' ? parsed.baseUrl : '',
+          apiKey: typeof parsed.apiKey === 'string' ? parsed.apiKey : '',
+          model: typeof parsed.model === 'string' ? parsed.model : '',
+        };
+      }
+    }
+  } catch (err) {
+    console.error('Failed to parse custom provider config from localStorage:', err);
+  }
+  return {
+    name: '',
+    baseUrl: '',
+    apiKey: '',
+    model: '',
+  };
+}
+
+export function saveStoredCustomProvider(config: CustomProviderConfig): void {
+  try {
+    localStorage.setItem(LOCAL_STORAGE_CUSTOM_PROVIDER, JSON.stringify(config));
+  } catch (err) {
+    console.error('Failed to save custom provider config to localStorage:', err);
+  }
+}
 
 export function getStoredApiKeys(): StoredApiKey[] {
   try {

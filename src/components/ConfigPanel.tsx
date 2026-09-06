@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { SubtitleFormat, GameFormat, ToneOption, AppMode, GameColumnMapping, BatchSizeOption, AIModelId } from '../types';
+import { SubtitleFormat, GameFormat, ToneOption, AppMode, GameColumnMapping, BatchSizeOption, AIModelId, AIProvider, CustomProviderConfig } from '../types';
 import { TONE_OPTIONS, AI_MODELS } from '../constants';
 import { UILanguage, TRANSLATIONS } from '../lib/i18n';
 import { SearchableLanguageSelect } from './SearchableLanguageSelect';
@@ -23,6 +23,7 @@ import {
   FileCode2,
   Info,
   Cpu,
+  Server,
   CheckSquare,
   Square,
   ChevronDown,
@@ -36,6 +37,7 @@ import {
   AlertTriangle,
   Timer,
   Layers,
+  Gauge,
   Plus,
   Minus
 } from 'lucide-react';
@@ -76,6 +78,9 @@ interface ConfigPanelProps {
   setAppendRTLMarkers?: (append: boolean) => void;
   rateLimitPacing?: boolean;
   setRateLimitPacing?: (pacing: boolean) => void;
+  activeProvider?: AIProvider;
+  customProviderConfig?: CustomProviderConfig;
+  onOpenApiKeyModal?: () => void;
 }
 
 export const ConfigPanel: React.FC<ConfigPanelProps> = ({
@@ -111,6 +116,9 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = ({
   setAppendRTLMarkers,
   rateLimitPacing = true,
   setRateLimitPacing,
+  activeProvider = 'gemini',
+  customProviderConfig,
+  onOpenApiKeyModal,
 }) => {
   const t = TRANSLATIONS[uiLang];
   const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
@@ -122,15 +130,21 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = ({
     switch (id) {
       case 'gemini-live-stream':
         return <Radio className="w-4 h-4 text-rose-500 animate-pulse" />;
+      case 'gemini-3.1-pro-preview':
       case 'gemini-3.1-pro':
-        return <BrainCircuit className="w-4 h-4 text-purple-500" />;
       case 'gemini-2.5-pro':
-        return <Sparkles className="w-4 h-4 text-indigo-500" />;
-      case 'gemini-2.5-flash':
-        return <Flame className="w-4 h-4 text-blue-500" />;
+        return <BrainCircuit className="w-4 h-4 text-purple-500" />;
+      case 'gemini-3.8-flash':
+        return <Sparkles className="w-4 h-4 text-emerald-500" />;
+      case 'gemini-3.7-flash':
+        return <Zap className="w-4 h-4 text-teal-500" />;
+      case 'gemini-3.1-flash-lite':
+        return <Gauge className="w-4 h-4 text-amber-500" />;
+      case 'gemini-3.5-flash':
+        return <Flame className="w-4 h-4 text-cyan-500" />;
       case 'gemini-3.6-flash':
       default:
-        return <Zap className="w-4 h-4 text-emerald-500" />;
+        return <Zap className="w-4 h-4 text-blue-500" />;
     }
   };
 
@@ -269,8 +283,65 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = ({
             </button>
           </div>
 
+          {/* Custom Provider Active Banner */}
+          {activeProvider === 'custom' && (
+            <div className="bg-emerald-50/80 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800/80 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+              <div className="flex items-center gap-2.5">
+                <div className="p-1.5 rounded-lg bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 shrink-0">
+                  <Server className="w-4 h-4" />
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-xs font-bold text-emerald-800 dark:text-emerald-200 flex items-center gap-1.5">
+                    <span>{uiLang === 'en' ? 'Custom Provider Active (BYOK)' : 'سرویس‌دهنده سفارشی فعال است'}</span>
+                    {customProviderConfig?.name && (
+                      <span className="text-[10px] bg-emerald-200/60 dark:bg-emerald-900 text-emerald-800 dark:text-emerald-300 px-1.5 py-0.2 rounded font-medium">
+                        {customProviderConfig.name}
+                      </span>
+                    )}
+                  </span>
+                  <span className="text-[11px] text-emerald-700/90 dark:text-emerald-400 font-mono">
+                    {uiLang === 'en' ? 'Target Model:' : 'مدل هدف:'} {customProviderConfig?.model || (uiLang === 'en' ? 'Not specified' : 'تعیین‌نشده')}
+                  </span>
+                </div>
+              </div>
+
+              {onOpenApiKeyModal && (
+                <button
+                  type="button"
+                  onClick={onOpenApiKeyModal}
+                  className="self-start sm:self-center px-3 py-1 text-xs font-semibold bg-white dark:bg-slate-900 border border-emerald-300 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300 rounded-lg hover:bg-emerald-50 dark:hover:bg-slate-800 transition-colors shrink-0 shadow-xs"
+                >
+                  {uiLang === 'en' ? 'Manage Provider' : 'تنظیمات سرویس‌دهنده'}
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Primary Model Dropdown Select with Clear Descriptive Labels */}
+          <div className="flex flex-col gap-1.5">
+            <label className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 flex items-center justify-between">
+              <span>{uiLang === 'en' ? 'Select Gemini Model:' : 'انتخاب مدل جمینای:'}</span>
+              <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-normal">
+                {AI_MODELS.length} {uiLang === 'en' ? 'models available' : 'مدل فعال'}
+              </span>
+            </label>
+            <div className="relative">
+              <select
+                value={selectedModel}
+                onChange={(e) => setSelectedModel(e.target.value as AIModelId)}
+                className="w-full text-xs font-medium bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2.5 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all font-sans cursor-pointer shadow-xs"
+              >
+                {AI_MODELS.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.displayLabel || `${m.name} — ${m.badge}`}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
           {/* Quick Model Selector Segmented Cards */}
-          <div className="grid grid-cols-1 xs:grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-1.5 pt-1">
             {AI_MODELS.map((m) => {
               const isSelected = selectedModel === m.id;
               return (
@@ -278,30 +349,28 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = ({
                   key={m.id}
                   type="button"
                   onClick={() => setSelectedModel(m.id)}
-                  className={`group relative text-start p-2.5 rounded-xl border transition-all flex flex-col justify-between gap-2 overflow-hidden ${
+                  className={`group relative text-start p-2 rounded-xl border transition-all flex flex-col justify-between gap-1.5 overflow-hidden ${
                     isSelected
-                      ? 'bg-white dark:bg-slate-900 border-indigo-500 dark:border-indigo-500 ring-2 ring-indigo-500/20 shadow-md shadow-indigo-500/5'
+                      ? 'bg-white dark:bg-slate-900 border-indigo-500 dark:border-indigo-500 ring-2 ring-indigo-500/20 shadow-sm shadow-indigo-500/5'
                       : 'bg-white/70 dark:bg-slate-900/50 border-slate-200/80 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 hover:bg-white dark:hover:bg-slate-900'
                   }`}
                 >
-                  <div className="flex items-center justify-between gap-1.5 w-full">
-                    <div className="flex items-center gap-1.5">
-                      <div className={`p-1 rounded-lg shrink-0 ${isSelected ? 'bg-indigo-50 dark:bg-indigo-950/60' : 'bg-slate-100 dark:bg-slate-800'}`}>
-                        {getModelIcon(m.id)}
-                      </div>
-                      <span className={`text-xs font-bold truncate ${isSelected ? 'text-indigo-700 dark:text-indigo-300' : 'text-slate-800 dark:text-slate-200'}`}>
-                        {m.name}
-                      </span>
+                  <div className="flex items-center gap-1.5 w-full">
+                    <div className={`p-1 rounded-lg shrink-0 ${isSelected ? 'bg-indigo-50 dark:bg-indigo-950/60' : 'bg-slate-100 dark:bg-slate-800'}`}>
+                      {getModelIcon(m.id)}
                     </div>
+                    <span className={`text-[11px] font-bold truncate ${isSelected ? 'text-indigo-700 dark:text-indigo-300' : 'text-slate-800 dark:text-slate-200'}`}>
+                      {m.name}
+                    </span>
                   </div>
 
-                  <div className="flex items-center justify-between gap-1 text-[10px] w-full pt-1 border-t border-slate-100 dark:border-slate-800/80">
-                    <span className={`font-semibold px-1.5 py-0.5 rounded-md border text-[9px] ${m.badgeColor}`}>
-                      {m.badge}
+                  <div className="flex items-center justify-between gap-1 text-[9px] w-full pt-1 border-t border-slate-100 dark:border-slate-800/80">
+                    <span className={`font-semibold px-1 py-0.2 rounded border truncate ${m.badgeColor}`}>
+                      {m.status === 'preview' ? 'Preview' : m.badge.split('/')[0].trim()}
                     </span>
                     {m.speed && (
-                      <span className="text-slate-500 dark:text-slate-400 font-mono text-[9px]">
-                        {m.speed}
+                      <span className="text-slate-500 dark:text-slate-400 font-mono shrink-0">
+                        {m.speed.split(' ')[0]}
                       </span>
                     )}
                   </div>
@@ -323,6 +392,16 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = ({
                   <div className="text-slate-600 dark:text-slate-300 text-[11px] leading-relaxed">
                     <strong className="text-slate-800 dark:text-slate-100 me-1">{activeM.name}:</strong>
                     <span>{desc}</span>
+                    {activeM.quality && (
+                      <span className="ms-2 text-[10px] text-amber-600 dark:text-amber-400 font-medium">
+                        {activeM.quality}
+                      </span>
+                    )}
+                    {activeM.status === 'preview' && (
+                      <span className="ms-2 px-1.5 py-0.5 rounded text-[9px] bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20 font-mono">
+                        Preview Tier
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>

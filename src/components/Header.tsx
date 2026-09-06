@@ -18,7 +18,8 @@ import {
   Film,
   Gamepad2,
   Send,
-  Github
+  Github,
+  Server
 } from 'lucide-react';
 
 interface HeaderProps {
@@ -32,6 +33,8 @@ interface HeaderProps {
   onOpenHelpModal?: () => void;
   onOpenBilingualModal?: () => void;
   userApiKey: string;
+  activeProvider?: 'gemini' | 'custom';
+  customProviderName?: string;
   onExport: () => void;
   onReset: () => void;
   hasSubtitles: boolean;
@@ -55,6 +58,8 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenApiKeyModal,
   onOpenHelpModal,
   userApiKey,
+  activeProvider = 'gemini',
+  customProviderName,
   onExport,
   onReset,
   hasSubtitles,
@@ -77,8 +82,8 @@ export const Header: React.FC<HeaderProps> = ({
       <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-3">
         
         {/* Left: Brand / Logo */}
-        <div className="flex items-center justify-between w-full md:w-auto gap-4">
-          <div className="flex items-center gap-3">
+        <div className="flex items-center justify-between w-full md:w-auto gap-4 shrink-0">
+          <div className="flex items-center gap-2.5 sm:gap-3">
             <div className={`w-9 h-9 sm:w-10 sm:h-10 rounded-xl overflow-hidden shadow-sm p-0.5 border transition-all duration-300 shrink-0 ${
               mode === 'game'
                 ? 'border-purple-500/50 shadow-purple-500/10'
@@ -94,10 +99,10 @@ export const Header: React.FC<HeaderProps> = ({
             
             <div>
               <div className="flex items-center gap-2">
-                <h1 className="text-base font-bold text-slate-900 dark:text-white tracking-tight">
+                <h1 className="text-base font-bold text-slate-900 dark:text-white tracking-tight shrink-0">
                   {t.appTitle}
                 </h1>
-                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border hidden sm:inline-flex items-center gap-1 ${
+                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border hidden sm:inline-flex items-center gap-1 shrink-0 ${
                   mode === 'game'
                     ? 'bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20'
                     : 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20'
@@ -105,7 +110,7 @@ export const Header: React.FC<HeaderProps> = ({
                   {mode === 'game' ? 'Game Mode' : 'Cinema Mode'}
                 </span>
               </div>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400 hidden lg:block leading-tight">
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 hidden lg:block leading-tight truncate max-w-[220px] xl:max-w-[280px]">
                 {mode === 'cinema' ? t.appSubtitle : t.modeGameDesc}
               </p>
             </div>
@@ -145,13 +150,13 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
 
         {/* Right: Controls & Actions */}
-        <div className="flex items-center gap-2 w-full md:w-auto justify-end flex-wrap sm:flex-nowrap">
+        <div className="flex items-center gap-1.5 sm:gap-2 w-full md:w-auto justify-end flex-wrap">
           
           {/* Loaded File Badge */}
           {hasSubtitles && fileName && (
-            <div className="hidden xl:flex items-center gap-2 px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-xs text-slate-700 dark:text-slate-300">
+            <div className="hidden 2xl:flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-xs text-slate-700 dark:text-slate-300 shrink-0">
               <FileText className="w-3.5 h-3.5 text-indigo-500" />
-              <span className="max-w-[120px] truncate font-medium">{fileName}</span>
+              <span className="max-w-[110px] truncate font-medium">{fileName}</span>
               <span className="uppercase text-[9px] font-mono px-1 py-0.5 rounded bg-indigo-500/10 text-indigo-600 dark:text-indigo-300 font-bold">
                 {subtitleFormat}
               </span>
@@ -228,15 +233,39 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             onClick={onOpenApiKeyModal}
             className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-xl border transition-all active:scale-95 shrink-0 ${
-              userApiKey
+              activeProvider === 'custom'
                 ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-700/60 shadow-xs'
+                : userApiKey
+                ? 'bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 border-indigo-300 dark:border-indigo-700/60 shadow-xs'
                 : 'bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700'
             }`}
-            title={userApiKey ? t.customKeyActive : t.defaultKeyActive}
+            title={
+              activeProvider === 'custom'
+                ? `Custom Provider: ${customProviderName || 'Active (BYOK)'}`
+                : userApiKey
+                ? t.customKeyActive
+                : t.defaultKeyActive
+            }
           >
-            <Key className={`w-3.5 h-3.5 ${userApiKey ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-500'}`} />
-            <span>{t.apiKey}</span>
-            <span className={`w-1.5 h-1.5 rounded-full ${userApiKey ? 'bg-emerald-500 dark:bg-emerald-400' : 'bg-slate-400 dark:bg-slate-500'}`} />
+            {activeProvider === 'custom' ? (
+              <Server className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+            ) : (
+              <Key className={`w-3.5 h-3.5 ${userApiKey ? 'text-indigo-600 dark:text-indigo-400' : 'text-amber-500'}`} />
+            )}
+            <span className="truncate max-w-[95px] sm:max-w-[125px]">
+              {activeProvider === 'custom'
+                ? (customProviderName ? `BYOK: ${customProviderName}` : 'Custom Provider')
+                : t.apiKey}
+            </span>
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
+                activeProvider === 'custom'
+                  ? 'bg-emerald-500 dark:bg-emerald-400 ring-2 ring-emerald-500/20'
+                  : userApiKey
+                  ? 'bg-indigo-500 dark:bg-indigo-400'
+                  : 'bg-slate-400 dark:bg-slate-500'
+              }`}
+            />
           </button>
 
           {/* Reset File Button */}

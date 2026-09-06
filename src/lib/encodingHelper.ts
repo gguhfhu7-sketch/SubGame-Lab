@@ -4,7 +4,35 @@ import jschardet from 'jschardet';
  * Intelligent file encoding detector and decoder supporting legacy Windows-1256 (Persian/Arabic ANSI),
  * UTF-8 with and without BOM, UTF-16 LE/BE, and fallback charsets.
  */
-export function detectEncodingAndDecodeText(buffer: ArrayBuffer): { text: string; encoding: string; confidence: number } {
+export function detectEncodingAndDecodeText(
+  buffer: ArrayBuffer,
+  forcedEncoding?: string
+): { text: string; encoding: string; confidence: number } {
+  const cleanForced = forcedEncoding?.trim();
+
+  // If user explicitly selected a specific encoding (not 'auto')
+  if (cleanForced && cleanForced.toLowerCase() !== 'auto') {
+    try {
+      const normalizedEnc = cleanForced.toLowerCase();
+      let targetCharset = cleanForced;
+      if (normalizedEnc.includes('1256') || normalizedEnc.includes('arabic') || normalizedEnc.includes('persian')) {
+        targetCharset = 'windows-1256';
+      } else if (normalizedEnc.includes('utf-8') || normalizedEnc.includes('utf8')) {
+        targetCharset = 'utf-8';
+      } else if (normalizedEnc.includes('utf-16le') || normalizedEnc.includes('utf16le')) {
+        targetCharset = 'utf-16le';
+      } else if (normalizedEnc.includes('iso-8859-1') || normalizedEnc.includes('latin1')) {
+        targetCharset = 'iso-8859-1';
+      }
+
+      const decoder = new TextDecoder(targetCharset);
+      const decoded = decoder.decode(buffer);
+      return { text: decoded, encoding: targetCharset.toUpperCase(), confidence: 1 };
+    } catch (err) {
+      console.warn(`Failed to decode with user requested encoding "${cleanForced}", falling back to auto-detect:`, err);
+    }
+  }
+
   const bytes = new Uint8Array(buffer);
 
   // 1. Check for UTF-8 Byte Order Mark (EF BB BF)

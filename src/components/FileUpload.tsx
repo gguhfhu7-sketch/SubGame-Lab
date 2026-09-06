@@ -16,7 +16,7 @@ import { SAMPLE_SRT_CONTENT, SAMPLE_GAME_CSV_DATA, SAMPLE_GAME_JSON_DATA } from 
 
 interface FileUploadProps {
   mode: AppMode;
-  onFileSelect: (content: string, fileName: string, encoding: string) => void;
+  onFileSelect: (buffer: ArrayBuffer, fileName: string, fileSize: number, encoding: string) => void;
   selectedEncoding: string;
   setSelectedEncoding: (enc: string) => void;
   detectedEncoding?: string;
@@ -74,11 +74,7 @@ export const FileUpload: React.FC<FileUploadProps> = ({
         return;
       }
 
-      onFileSelect('', file.name, selectedEncoding);
-      const customEvent = new CustomEvent('processBuffer', {
-        detail: { buffer, fileName: file.name, fileSize: file.size, mode }
-      });
-      window.dispatchEvent(customEvent);
+      onFileSelect(buffer, file.name, file.size, selectedEncoding);
     };
 
     reader.readAsArrayBuffer(file);

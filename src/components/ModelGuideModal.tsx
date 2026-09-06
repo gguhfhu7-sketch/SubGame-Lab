@@ -36,15 +36,21 @@ export const ModelGuideModal: React.FC<ModelGuideModalProps> = ({
     switch (id) {
       case 'gemini-live-stream':
         return <Radio className="w-5 h-5 text-rose-500 animate-pulse" />;
+      case 'gemini-3.1-pro-preview':
       case 'gemini-3.1-pro':
-        return <BrainCircuit className="w-5 h-5 text-purple-500" />;
       case 'gemini-2.5-pro':
-        return <Sparkles className="w-5 h-5 text-indigo-500" />;
-      case 'gemini-2.5-flash':
-        return <Flame className="w-5 h-5 text-blue-500" />;
+        return <BrainCircuit className="w-5 h-5 text-purple-500" />;
+      case 'gemini-3.8-flash':
+        return <Sparkles className="w-5 h-5 text-emerald-500" />;
+      case 'gemini-3.7-flash':
+        return <Zap className="w-5 h-5 text-teal-500" />;
+      case 'gemini-3.1-flash-lite':
+        return <Gauge className="w-5 h-5 text-amber-500" />;
+      case 'gemini-3.5-flash':
+        return <Flame className="w-5 h-5 text-cyan-500" />;
       case 'gemini-3.6-flash':
       default:
-        return <Zap className="w-5 h-5 text-emerald-500" />;
+        return <Zap className="w-5 h-5 text-blue-500" />;
     }
   };
 
@@ -55,12 +61,13 @@ export const ModelGuideModal: React.FC<ModelGuideModalProps> = ({
           categoryFa: 'پخش زنده و جریانی (Streaming)',
           categoryEn: 'Real-Time Streaming',
           categoryAr: 'البث المباشر الفوري',
-          bestForFa: 'ترجمه زنده و آنی، مشاهده پیشرفت کلمه‌به‌کلمه و جلوگیری از تایم‌اوت در متون سنگین.',
-          bestForEn: 'Live low-latency translations, progressive word-by-word streaming, zero blocking.',
+          bestForFa: 'ترجمه زنده و آنی سطر‌به‌سطر، مشاهده بلادرنگ و جلوگیری از تایم‌اوت در متون سنگین.',
+          bestForEn: 'Live low-latency translations, progressive row-by-row streaming, zero blocking.',
           bestForAr: 'الترجمة الحية والفورية وتدفق النتائج كلمة بكلمة بدون انقطاع.',
           speed: 'فوق‌العاده سریع (Real-time)',
           reasoning: 'عالی برای زیرنویس و دیالوگ',
         };
+      case 'gemini-3.1-pro-preview':
       case 'gemini-3.1-pro':
       case 'gemini-2.5-pro':
         return {
@@ -70,21 +77,64 @@ export const ModelGuideModal: React.FC<ModelGuideModalProps> = ({
           bestForFa: 'متون سنگین فانتزی/گیمینگ، دیالوگ‌های داستانی، حفظ لحن‌های پیچیده و رعایت دقیق ساختارهای حساس بازی.',
           bestForEn: 'Heavy RPG fantasy lore, intricate narrative nuances, slang, and strict game code parsing.',
           bestForAr: 'نصوص ألعاب الآربيجي المعقدة، الحوارات الدرامية العميقة، وحماية تراكيب الأكواد الحساسة.',
-          speed: 'متوسط تا استاندارد',
+          speed: 'استاندارد تا عمیق (Deep Thought)',
           reasoning: 'بالاترین سطح هوش و منطق',
         };
+      case 'gemini-3.8-flash':
+        return {
+          categoryFa: 'کیفیت برتر فلش (Best Overall Flash Quality)',
+          categoryEn: 'Flagship Flash Quality',
+          categoryAr: 'الجودة الفائقة الشاملة',
+          bestForFa: 'پرچم‌دار سری Flash؛ بالاترین دقت ترجمه، بازگردانی اصطلاحات روزمره و محاوره‌ای با سرعت عالی.',
+          bestForEn: 'Flagship Flash model with superior quality, tone retention, slang translation, and long context.',
+          bestForAr: 'النموذج الأفضل والأحدث لمطابقة السياق، حفظ النبرة، والمصطلحات الدقيقة بأقل زمن استجابة.',
+          speed: 'فوق‌سریع (۰.۶ ثانیه)',
+          reasoning: 'هوشمند و روان',
+        };
+      case 'gemini-3.7-flash':
+        return {
+          categoryFa: 'کیفیت بالا و روان (High Quality Subtitles)',
+          categoryEn: 'High-Quality General Translation',
+          categoryAr: 'جودة عالية وانسيابية',
+          bestForFa: 'ترجمه دقیق و روان فیلم و سریال‌ها، گنجینه واژگان غنی و ساختار طبیعی جملات.',
+          bestForEn: 'High-quality translation with rich vocabulary adaptation and natural dialog fluency.',
+          bestForAr: 'دقة لغوية عالية وترجمة سلسة لحوارات الأفلام والمسلسلات الطويلة.',
+          speed: 'سریع (۰.۷ ثانیه)',
+          reasoning: 'بسیار بالا',
+        };
+      case 'gemini-3.1-flash-lite':
+        return {
+          categoryFa: 'حجم بالا و کم‌هزینه (High Volume & Low Cost)',
+          categoryEn: 'High Volume & Cost Efficiency',
+          categoryAr: 'حجم ضخم واقتصادي جداً',
+          bestForFa: 'فایل‌های بسیار حجیم زیرنویس و بازی، کاهش چشمگیر مصرف سهمیه API و تاخیر بسیار کم.',
+          bestForEn: 'Engineered for high-frequency bulk translation, massive subtitle batches, and minimal quota footprint.',
+          bestForAr: 'مصمم خصيصاً للملفات الضخمة وحزم الترجمة ذات التردد العالي باستهلاك رمزي للرصيد.',
+          speed: 'فوق‌العاده پرسرعت (۰.۳ ثانیه)',
+          reasoning: 'بهینه و سریع',
+        };
+      case 'gemini-3.5-flash':
+        return {
+          categoryFa: 'سبک و استاندارد (Standard Lightweight)',
+          categoryEn: 'Lightweight & Dependable',
+          categoryAr: 'خفيف وقياسي',
+          bestForFa: 'ترجمه استاندارد با پاسخ‌دهی سریع و بهینه برای زیرنویس‌های روزمره.',
+          bestForEn: 'Lightweight and dependable Flash model for standard subtitle translation workloads.',
+          bestForAr: 'نموذج خفيف وموثوق لترجمة النصوص العادية واستهلاك الموارد بأقل قدر.',
+          speed: 'سریع (۰.۵ ثانیه)',
+          reasoning: 'استاندارد',
+        };
       case 'gemini-3.6-flash':
-      case 'gemini-2.5-flash':
       default:
         return {
-          categoryFa: 'سرعت بالا و بهینه‌سازی توکن (High Speed & Efficiency)',
-          categoryEn: 'Speed & Cost Efficiency',
-          categoryAr: 'سرعة فائقة واستهلاك أمثل',
-          bestForFa: 'بهترین گزینه برای ترجمه حجیم و فوق‌العاده سریع زیرنویس‌های روزمره فیلم و سریال با مصرف بهینه API.',
-          bestForEn: 'Best for large subtitle files, rapid turnarounds, and minimal API quota footprint.',
-          bestForAr: 'الخيار الأفضل للترجمة السريعة لملفات الترجمة الضخمة مع استهلاك اقتصادي للـ API.',
-          speed: 'بسیار سریع (Flash Engine)',
-          reasoning: 'عالی و بهینه',
+          categoryFa: 'پایدار و مطمئن (Stable & Proven)',
+          categoryEn: 'Stable & Proven Subtitles',
+          categoryAr: 'مستقر ومثبت الكفاءة',
+          bestForFa: 'پایداری بالا، تعادل سرعت و وفاداری به متن و تاب‌آوری اثبات‌شده در برابر محدودیت‌های سهمیه.',
+          bestForEn: 'Proven balance of speed, accuracy, and rate-limit resilience for bulk subtitle processing.',
+          bestForAr: 'توازن ممتاز بين السرعة والدقة واستهلاك الحصص مع معالجة حزم الترجمة الكبيرة.',
+          speed: 'بسیار سریع (۰.۶ ثانیه)',
+          reasoning: 'عالی و پایدار',
         };
     }
   };

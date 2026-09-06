@@ -10,8 +10,18 @@ import {
   ToastMessage,
   BilingualConfig,
   BatchSizeOption,
-  AIModelId
+  AIModelId,
+  AIProvider,
+  CustomProviderConfig,
+  ModeSessionState
 } from './types';
+import { 
+  createDefaultSession, 
+  loadSessionFromDb, 
+  saveSessionToDb, 
+  debounceSaveSession, 
+  clearSessionInDb 
+} from './lib/sessionStorageDb';
 import { 
   parseSubtitleFile, 
   exportSubtitleFile, 
@@ -42,7 +52,14 @@ import {
   SAMPLE_GAME_JSON_CONTENT,
   AI_MODELS 
 } from './constants';
-import { getApiKeyArrayForHeader } from './lib/apiKeyManager';
+import { resolveModelId, DEFAULT_TRANSLATION_MODEL_ID } from './modelRegistry';
+import { 
+  getApiKeyArrayForHeader, 
+  getActiveAiProvider, 
+  setActiveAiProvider, 
+  getStoredCustomProvider, 
+  saveStoredCustomProvider 
+} from './lib/apiKeyManager';
 import { UILanguage, TRANSLATIONS } from './lib/i18n';
 import { SUBGAME_LAB_LOGO } from './assets/logo';
 import { Send, Sparkles, Github } from 'lucide-react';
@@ -65,27 +82,12 @@ export default function App() {
     return (localStorage.getItem('gemini_app_mode') as AppMode) || 'cinema';
   });
 
-  const setMode = (newMode: AppMode) => {
-    setModeState(newMode);
-    localStorage.setItem('gemini_app_mode', newMode);
-    if (newMode === 'game') {
-      if (['srt', 'vtt', 'ass', 'ssa', 'sub'].includes(targetFormat)) {
-        setTargetFormat('csv');
-        setSourceFormat('csv');
-      }
-      if (selectedTone === 'cinematic') {
-        setSelectedTone('epic');
-      }
-    } else {
-      if (['csv', 'json', 'xlsx', 'txt'].includes(targetFormat)) {
-        setTargetFormat('srt');
-        setSourceFormat('srt');
-      }
-      if (selectedTone === 'epic') {
-        setSelectedTone('cinematic');
-      }
-    }
-  };
+  // Sessions dictionary for mode isolation (Cinema Mode vs Game Mode)
+  const sessionsRef = useRef<Record<AppMode, ModeSessionState>>({
+    cinema: createDefaultSession('cinema'),
+    game: createDefaultSession('game'),
+  });
+  const hasInitializedSessions = useRef<boolean>(false);
 
   // i18n & BYOK API Key State
   const [uiLang, setUiLang] = useState<UILanguage>(() => {
@@ -166,15 +168,43 @@ export default function App() {
   const [targetFormat, setTargetFormat] = useState<SubtitleFormat | GameFormat>('srt');
 
   // Advanced Optimization & Localization options
+  const [serverHasKey, setServerHasKey] = useState<boolean>(false);
+  const lastUploadedBufferRef = useRef<{ buffer: ArrayBuffer; name: string; size: number } | null>(null);
+
+  useEffect(() => {
+    fetch('/api/health')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data?.hasServerKey) {
+          setServerHasKey(true);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   const [selectedModel, setSelectedModel] = useState<AIModelId>(() => {
     const saved = localStorage.getItem('subgamelab_selected_model');
-    if (saved && AI_MODELS.some((m) => m.id === saved)) {
-      return saved as AIModelId;
+    if (saved) {
+      return resolveModelId(saved) as AIModelId;
     }
-    return 'gemini-3.6-flash';
+    return DEFAULT_TRANSLATION_MODEL_ID as AIModelId;
   });
-  const [activeRunningModel, setActiveRunningModel] = useState<AIModelId | undefined>(undefined);
+  const [activeRunningModel, setActiveRunningModel] = useState<string | undefined>(undefined);
   const [isFallbackActive, setIsFallbackActive] = useState<boolean>(false);
+
+  // Active AI Provider: 'gemini' (default) or 'custom' (BYOK)
+  const [activeAiProvider, setActiveAiProviderState] = useState<AIProvider>(() => getActiveAiProvider());
+  const [customProviderConfig, setCustomProviderConfig] = useState<CustomProviderConfig>(() => getStoredCustomProvider());
+
+  const handleProviderChange = (provider: AIProvider) => {
+    setActiveAiProviderState(provider);
+    setActiveAiProvider(provider);
+  };
+
+  const handleSaveCustomConfig = (cfg: CustomProviderConfig) => {
+    setCustomProviderConfig(cfg);
+    saveStoredCustomProvider(cfg);
+  };
 
   const [batchSize, setBatchSize] = useState<BatchSizeOption>(() => {
     const saved = localStorage.getItem('subgamelab_custom_batch_size');
@@ -228,6 +258,9 @@ export default function App() {
 
   const cancelTranslationRef = useRef<boolean>(false);
   const isPausedRef = useRef<boolean>(false);
+  const activeAbortControllerRef = useRef<AbortController | null>(null);
+  const activeJobIdRef = useRef<string>('');
+  const isTranslatingRef = useRef<boolean>(false);
 
   useEffect(() => {
     isPausedRef.current = isPaused;
@@ -235,16 +268,164 @@ export default function App() {
 
   // Toast Helper
   const showToast = (message: string, type: 'success' | 'error' | 'info' | 'warning' = 'info') => {
-    const id = Date.now().toString();
-    setToasts((prev) => [...prev, { id, message, type }]);
+    setToasts((prev) => {
+      if (prev.some((t) => t.message === message && t.type === type)) {
+        return prev;
+      }
+      const id = Date.now().toString() + '_' + Math.random().toString(36).substring(2, 6);
+      return [...prev, { id, message, type }];
+    });
     setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== id));
+      setToasts((prev) => prev.filter((t) => !(t.message === message && t.type === type)));
     }, 4000);
   };
 
   const handleDismissToast = (id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
+
+  // Helper to apply isolated mode session to local state
+  const applySessionState = (s: ModeSessionState) => {
+    setFileName(s.fileName || '');
+    setFileSize(s.fileSize || 0);
+    setSourceFormat(s.sourceFormat);
+    setTargetFormat(s.targetFormat);
+    setRawHeader(s.rawHeader);
+    setSelectedEncoding(s.selectedEncoding || 'auto');
+    setDetectedEncoding(s.detectedEncoding || '');
+    setItems(s.items || []);
+    setGameColumns(s.gameColumns || []);
+    setGameMapping(s.gameMapping || { sourceColumn: 'Source', targetColumn: 'Translation', hasHeaders: true });
+    setGameOriginalStructure(s.gameOriginalStructure || null);
+    setSourceLanguage(s.sourceLanguage || 'auto');
+    setDetectedSourceLang(s.detectedSourceLang || '');
+    setTargetLanguage(s.targetLanguage || 'fa');
+    setSelectedTone(s.selectedTone);
+    setCustomPrompt(s.customPrompt || '');
+    setIsTranslating(false);
+    setIsPaused(false);
+    setCurrentBatch(s.currentBatch || 0);
+    setTotalBatches(s.totalBatches || 0);
+    setTranslatedCount(s.translatedCount || 0);
+    lastUploadedBufferRef.current = s.lastUploadedBuffer || null;
+  };
+
+  // Mode Switcher with Strict Context & State Isolation (Finding 02B)
+  const setMode = (newMode: AppMode) => {
+    if (newMode === mode) return;
+
+    // 1. Snapshot and persist current active mode state
+    const currentSnapshot: ModeSessionState = {
+      fileName,
+      fileSize,
+      sourceFormat,
+      targetFormat,
+      rawHeader,
+      selectedEncoding,
+      detectedEncoding,
+      items,
+      gameColumns,
+      gameMapping,
+      gameOriginalStructure,
+      sourceLanguage,
+      detectedSourceLang,
+      targetLanguage,
+      selectedTone,
+      customPrompt,
+      isTranslating: false,
+      isPaused: false,
+      currentBatch,
+      totalBatches,
+      translatedCount,
+      lastUploadedBuffer: lastUploadedBufferRef.current,
+    };
+    sessionsRef.current[mode] = currentSnapshot;
+    saveSessionToDb(mode, currentSnapshot);
+
+    // 2. Stop ongoing translation if user switches mode
+    if (isTranslating) {
+      cancelTranslationRef.current = true;
+      setIsTranslating(false);
+      setIsPaused(false);
+    }
+
+    // 3. Switch mode
+    setModeState(newMode);
+    localStorage.setItem('gemini_app_mode', newMode);
+
+    // 4. Restore target mode session
+    const targetSession = sessionsRef.current[newMode] || createDefaultSession(newMode);
+    applySessionState(targetSession);
+
+    showToast(
+      newMode === 'game'
+        ? (uiLang === 'en' ? 'Switched to Game Localization Mode' : 'حالت بومی‌سازی بازی فعال شد')
+        : (uiLang === 'en' ? 'Switched to Cinema Subtitle Mode' : 'حالت زیرنویس سینما فعال شد'),
+      'info'
+    );
+  };
+
+  // Load isolated sessions from IndexedDB on startup
+  useEffect(() => {
+    let isMounted = true;
+    async function initSessions() {
+      const [savedCinema, savedGame] = await Promise.all([
+        loadSessionFromDb('cinema'),
+        loadSessionFromDb('game'),
+      ]);
+      if (!isMounted) return;
+      if (savedCinema) {
+        sessionsRef.current.cinema = { ...createDefaultSession('cinema'), ...savedCinema };
+      }
+      if (savedGame) {
+        sessionsRef.current.game = { ...createDefaultSession('game'), ...savedGame };
+      }
+      hasInitializedSessions.current = true;
+      const activeSession = sessionsRef.current[mode];
+      if (activeSession && (activeSession.items.length > 0 || activeSession.fileName)) {
+        applySessionState(activeSession);
+      }
+    }
+    initSessions();
+    return () => { isMounted = false; };
+  }, []);
+
+  // Auto-save session debounced when items or parameters change
+  useEffect(() => {
+    if (!hasInitializedSessions.current) return;
+    const currentSnapshot: ModeSessionState = {
+      fileName,
+      fileSize,
+      sourceFormat,
+      targetFormat,
+      rawHeader,
+      selectedEncoding,
+      detectedEncoding,
+      items,
+      gameColumns,
+      gameMapping,
+      gameOriginalStructure,
+      sourceLanguage,
+      detectedSourceLang,
+      targetLanguage,
+      selectedTone,
+      customPrompt,
+      isTranslating,
+      isPaused,
+      currentBatch,
+      totalBatches,
+      translatedCount,
+      lastUploadedBuffer: lastUploadedBufferRef.current,
+    };
+    sessionsRef.current[mode] = currentSnapshot;
+    debounceSaveSession(mode, currentSnapshot);
+  }, [
+    items, fileName, fileSize, sourceFormat, targetFormat, rawHeader,
+    selectedEncoding, detectedEncoding, gameColumns, gameMapping,
+    gameOriginalStructure, sourceLanguage, detectedSourceLang, targetLanguage,
+    selectedTone, customPrompt, isTranslating, isPaused, currentBatch,
+    totalBatches, translatedCount, mode
+  ]);
 
   // Column Mapping Change Handler for Game/CSV Localization
   const handleGameMappingChange = (newMapping: GameColumnMapping) => {
@@ -279,7 +460,14 @@ export default function App() {
   };
 
   // Process File Buffer for Cinema & Game Modes
-  const processBufferData = async (buffer: ArrayBuffer, name: string, size: number, currentAppMode = mode) => {
+  const processBufferData = async (
+    buffer: ArrayBuffer,
+    name: string,
+    size: number,
+    currentAppMode = mode,
+    forcedEncoding = selectedEncoding
+  ) => {
+    lastUploadedBufferRef.current = { buffer, name, size };
     const ext = name.split('.').pop()?.toLowerCase() || '';
     const isGameFile = currentAppMode === 'game' || ['csv', 'json', 'xlsx'].includes(ext);
 
@@ -291,7 +479,7 @@ export default function App() {
         setMode('game');
       }
       try {
-        const parsedGame = await parseGameLocalizationFile(buffer, name);
+        const parsedGame = await parseGameLocalizationFile(buffer, name, forcedEncoding);
         const unifiedItems: SubtitleItem[] = parsedGame.items.map((gItem, idx) => ({
           id: gItem.id || idx + 1,
           startTime: `00:00:00,000`,
@@ -314,7 +502,7 @@ export default function App() {
           setGameMapping(parsedGame.suggestedMapping);
         }
         setGameOriginalStructure(parsedGame.originalRawStructure);
-        setDetectedEncoding('UTF-8');
+        setDetectedEncoding(forcedEncoding && forcedEncoding !== 'auto' ? forcedEncoding : 'UTF-8');
 
         showToast(`${t.newFileLoaded} (${unifiedItems.length} ${t.linesCount})`, 'success');
         detectLanguageOnLoad(unifiedItems);
@@ -323,7 +511,7 @@ export default function App() {
       }
     } else {
       // Cinema Subtitle Mode
-      const { text, encoding } = detectEncodingAndDecode(buffer);
+      const { text, encoding } = detectEncodingAndDecode(buffer, forcedEncoding);
       setDetectedEncoding(encoding);
 
       try {
@@ -341,18 +529,37 @@ export default function App() {
     }
   };
 
+  const handleEncodingChange = (newEncoding: string) => {
+    setSelectedEncoding(newEncoding);
+    if (lastUploadedBufferRef.current) {
+      processBufferData(
+        lastUploadedBufferRef.current.buffer,
+        lastUploadedBufferRef.current.name,
+        lastUploadedBufferRef.current.size,
+        mode,
+        newEncoding
+      );
+      showToast(
+        uiLang === 'en'
+          ? `File reloaded using encoding: ${newEncoding}`
+          : `فایل با رمزگذاری ${newEncoding} مجدداً بارگذاری شد.`,
+        'info'
+      );
+    }
+  };
+
   // Listen to file upload events
   useEffect(() => {
     const handleProcessBuffer = (e: Event) => {
       const customEvent = e as CustomEvent;
       const { buffer, fileName: name, fileSize: size, mode: eventMode } = customEvent.detail;
       if (!buffer) return;
-      processBufferData(buffer, name || 'file', size || 0, eventMode || mode);
+      processBufferData(buffer, name || 'file', size || 0, eventMode || mode, selectedEncoding);
     };
 
     window.addEventListener('processBuffer', handleProcessBuffer);
     return () => window.removeEventListener('processBuffer', handleProcessBuffer);
-  }, [uiLang, t, mode]);
+  }, [uiLang, t, mode, selectedEncoding]);
 
   // Sample Load Handlers
   const handleLoadSubtitleSample = () => {
@@ -385,8 +592,9 @@ export default function App() {
 
       if (res.ok) {
         const data = await res.json();
-        if (data.detectedLanguage) {
-          setDetectedSourceLang(data.detectedLanguage);
+        const detectedName = data.languageFa || data.language || data.detectedLanguage;
+        if (detectedName) {
+          setDetectedSourceLang(detectedName);
         }
       }
     } catch {
@@ -475,6 +683,8 @@ export default function App() {
           customPrompt,
           mode,
           model: selectedModel,
+          provider: activeAiProvider,
+          customProvider: activeAiProvider === 'custom' ? customProviderConfig : undefined,
         }),
       });
 
@@ -730,6 +940,7 @@ export default function App() {
 
     setPacingRemainingSec(null);
     setIsTranslating(false);
+    isTranslatingRef.current = false;
 
     if (!cancelTranslationRef.current) {
       showToast(t.translationFinished, 'success');
@@ -738,22 +949,67 @@ export default function App() {
 
   // Start Batch or Live Streaming Translation Process
   const handleStartTranslation = async () => {
+    if (isTranslatingRef.current) return;
     if (items.length === 0) {
       showToast(t.noSubtitlesToTranslate, 'warning');
       return;
     }
 
+    // Verify provider configuration
+    if (activeAiProvider === 'custom') {
+      if (!customProviderConfig.baseUrl?.trim() || !customProviderConfig.apiKey?.trim() || !customProviderConfig.model?.trim()) {
+        showToast(
+          uiLang === 'en'
+            ? 'Please configure your Custom Provider (Base URL, API Key, Model ID) before translating.'
+            : 'لطفاً تنظیمات سرویس‌دهنده سفارشی (Base URL، کلید API و شناسه مدل) را تکمیل کنید.',
+          'warning'
+        );
+        setIsApiKeyModalOpen(true);
+        return;
+      }
+    } else {
+      // Verify Gemini API key is configured (client key or server env key)
+      const userKeys = getApiKeyArrayForHeader();
+      if (userKeys.length === 0 && !serverHasKey) {
+        showToast(
+          uiLang === 'en'
+            ? 'Please enter your Gemini API key to start translation.'
+            : 'برای شروع ترجمه، لطفاً کلید API جمینای خود را وارد کنید.',
+          'warning'
+        );
+        setIsApiKeyModalOpen(true);
+        return;
+      }
+    }
+
+    const effectiveModel = activeAiProvider === 'custom'
+      ? (customProviderConfig.model || selectedModel)
+      : selectedModel;
+
+    const currentJobId = 'job_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 7);
+    activeJobIdRef.current = currentJobId;
+
+    isTranslatingRef.current = true;
     setIsTranslating(true);
     setIsPaused(false);
     cancelTranslationRef.current = false;
-    setActiveRunningModel(selectedModel);
+    setActiveRunningModel(effectiveModel);
     setIsFallbackActive(false);
     setPacingRemainingSec(null);
 
-    // If live streaming model is selected, use real-time stream engine
+    // If live streaming model is selected, use real-time stream engine (Gemini only)
     if (selectedModel === 'gemini-live-stream') {
-      await translateWithLiveStream();
-      return;
+      if (activeAiProvider === 'custom') {
+        showToast(
+          uiLang === 'en'
+            ? 'Gemini Live Stream is only supported on Google Gemini. Translating with Custom Provider in standard mode.'
+            : 'حالت پخش زنده مخصوص گوگل جمینای است. ترجمه با سرویس‌دهنده سفارشی در حالت استاندارد انجام می‌شود.',
+          'info'
+        );
+      } else {
+        await translateWithLiveStream();
+        return;
+      }
     }
 
     const BATCH_SIZE = batchSize || 35;
@@ -767,15 +1023,15 @@ export default function App() {
     const isRTL = RTL_LANGUAGES.includes(targetLanguage);
 
     for (let b = 0; b < totalBatchesCount; b++) {
-      if (cancelTranslationRef.current) break;
+      if (cancelTranslationRef.current || activeJobIdRef.current !== currentJobId) break;
 
       // Handle pause loop
       while (isPausedRef.current) {
-        if (cancelTranslationRef.current) break;
+        if (cancelTranslationRef.current || activeJobIdRef.current !== currentJobId) break;
         await new Promise((resolve) => setTimeout(resolve, 500));
       }
 
-      if (cancelTranslationRef.current) break;
+      if (cancelTranslationRef.current || activeJobIdRef.current !== currentJobId) break;
 
       setCurrentBatch(b + 1);
 
@@ -819,29 +1075,38 @@ export default function App() {
 
       let success = false;
       let attempt = 0;
-      const MAX_RETRIES = 5;
+      const MAX_RETRIES = 3; // Consolidated unified retries (Requirements 6, 7, 8)
 
-      while (!success && attempt < MAX_RETRIES && !cancelTranslationRef.current) {
+      while (!success && attempt < MAX_RETRIES && !cancelTranslationRef.current && activeJobIdRef.current === currentJobId) {
         attempt++;
         if (attempt > 1) {
           setRetryInfo({ batch: b + 1, attempt, maxRetries: MAX_RETRIES });
-          const backoffDelay = Math.min(attempt * 6000, 30000);
+          // Exponential backoff with jitter
+          const baseDelay = Math.min(Math.pow(2, attempt - 1) * 2000, 16000);
+          const jitter = Math.floor(Math.random() * 1000);
+          const backoffDelay = baseDelay + jitter;
           showToast(
             uiLang === 'en'
-              ? `Rate limit backoff: retrying batch ${b + 1} in ${Math.round(backoffDelay / 1000)}s...`
+              ? `Retrying batch ${b + 1} (attempt ${attempt}/${MAX_RETRIES}) in ${(backoffDelay / 1000).toFixed(1)}s...`
               : uiLang === 'ar'
-              ? `انتظار تجديد الحصة: جاري إعادة المحاولة خلال ${Math.round(backoffDelay / 1000)} ثوانٍ...`
-              : `توقف کوتاه‌مدت به دلیل محدودیت درخواست: تلاش مجدد دسته ${b + 1} تا ${Math.round(backoffDelay / 1000)} ثانیه دیگر...`,
+              ? `إعادة محاولة الدفعة ${b + 1} (محاولة ${attempt} من ${MAX_RETRIES}) خلال ${(backoffDelay / 1000).toFixed(1)} ثانية...`
+              : `تلاش مجدد دسته ${b + 1} (تلاش ${attempt} از ${MAX_RETRIES}) تا ${(backoffDelay / 1000).toFixed(1)} ثانیه دیگر...`,
             'warning'
           );
           await new Promise((resolve) => setTimeout(resolve, backoffDelay));
         }
+
+        if (cancelTranslationRef.current || activeJobIdRef.current !== currentJobId) break;
+
+        const abortController = new AbortController();
+        activeAbortControllerRef.current = abortController;
 
         try {
           const response = await fetch('/api/translate', {
             method: 'POST',
             headers: getApiHeaders(),
             body: JSON.stringify({
+              jobId: currentJobId,
               items: itemsToTranslate.map((i) => ({ 
                 id: i.id, 
                 text: i.originalText,
@@ -853,18 +1118,34 @@ export default function App() {
               tone: selectedTone,
               customPrompt,
               mode,
-              model: selectedModel,
+              model: effectiveModel,
+              provider: activeAiProvider,
+              customProvider: activeAiProvider === 'custom' ? customProviderConfig : undefined,
             }),
+            signal: abortController.signal,
           });
 
-          if (!response.ok) {
-            const errData = await response.json().catch(() => ({}));
-            throw new Error(errData.error || `Server error (${response.status}) during translation.`);
+          // Verify job isolation: if cancelled or job changed, discard response immediately (Requirement 10)
+          if (cancelTranslationRef.current || activeJobIdRef.current !== currentJobId) {
+            break;
           }
 
-          const data = await response.json();
+          const data = await response.json().catch(() => ({}));
+
+          if (!response.ok || (data.success === false && data.error)) {
+            const isNonRetryable = data.retryable === false || response.status === 400 || response.status === 401 || response.status === 403 || response.status === 413;
+            const errorMsg = data.error || `Server error (${response.status}) during translation.`;
+
+            if (isNonRetryable) {
+              showToast(errorMsg, 'error');
+              cancelTranslationRef.current = true;
+              break; // Cease retries immediately for non-retryable errors (Requirement 7)
+            }
+            throw new Error(errorMsg);
+          }
+
           if (data.modelUsed) {
-            setActiveRunningModel(data.modelUsed as AIModelId);
+            setActiveRunningModel(data.modelUsed);
           }
           if (data.isFallback !== undefined) {
             setIsFallbackActive(Boolean(data.isFallback));
@@ -872,33 +1153,42 @@ export default function App() {
 
           const translationsList: Array<{ id: number; text: string }> = data.translations || [];
 
-          // Merge translations into state
-          setItems((prevItems) => {
-            const updated = [...prevItems];
-            translationsList.forEach((transObj) => {
-              const targetIndex = updated.findIndex((i) => i.id === transObj.id);
-              if (targetIndex !== -1) {
-                let finalText = isRTL ? fixRTLPunctuation(transObj.text) : transObj.text;
-                if (isRTL && appendRTLMarkers) {
-                  finalText = appendHiddenRTLMarker(finalText);
+          // Merge translations into state only if this job is still the active one
+          if (activeJobIdRef.current === currentJobId && !cancelTranslationRef.current) {
+            setItems((prevItems) => {
+              const updated = [...prevItems];
+              translationsList.forEach((transObj) => {
+                const targetIndex = updated.findIndex((i) => i.id === transObj.id);
+                if (targetIndex !== -1) {
+                  let finalText = isRTL ? fixRTLPunctuation(transObj.text) : transObj.text;
+                  if (isRTL && appendRTLMarkers) {
+                    finalText = appendHiddenRTLMarker(finalText);
+                  }
+                  updated[targetIndex] = {
+                    ...updated[targetIndex],
+                    translatedText: finalText,
+                  };
                 }
-                updated[targetIndex] = {
-                  ...updated[targetIndex],
-                  translatedText: finalText,
-                };
-              }
+              });
+              return updated;
             });
-            return updated;
-          });
 
-          setTranslatedCount((prev) => prev + batchSlice.length);
-          success = true;
-          setRetryInfo(null);
-        } catch (err: unknown) {
+            setTranslatedCount((prev) => prev + batchSlice.length);
+            success = true;
+            setRetryInfo(null);
+          }
+        } catch (err: any) {
+          if (err?.name === 'AbortError' || cancelTranslationRef.current || activeJobIdRef.current !== currentJobId) {
+            break;
+          }
           console.error(`Batch ${b + 1} attempt ${attempt} failed:`, err);
           if (attempt >= MAX_RETRIES) {
             const errMsg = err instanceof Error ? err.message : `Batch ${b + 1} failed after ${MAX_RETRIES} attempts.`;
             showToast(errMsg, 'error');
+          }
+        } finally {
+          if (activeAbortControllerRef.current === abortController) {
+            activeAbortControllerRef.current = null;
           }
         }
       }
@@ -925,6 +1215,7 @@ export default function App() {
 
     setPacingRemainingSec(null);
     setIsTranslating(false);
+    isTranslatingRef.current = false;
 
     if (!cancelTranslationRef.current) {
       showToast(t.translationFinished, 'success');
@@ -937,6 +1228,10 @@ export default function App() {
     if (!item) return;
 
     const isRTL = RTL_LANGUAGES.includes(targetLanguage);
+
+    const effectiveModel = activeAiProvider === 'custom'
+      ? (customProviderConfig.model || selectedModel)
+      : selectedModel;
 
     try {
       const res = await fetch('/api/translate', {
@@ -954,7 +1249,9 @@ export default function App() {
           tone: selectedTone,
           customPrompt,
           mode,
-          model: selectedModel,
+          model: effectiveModel,
+          provider: activeAiProvider,
+          customProvider: activeAiProvider === 'custom' ? customProviderConfig : undefined,
         }),
       });
 
@@ -1128,15 +1425,12 @@ export default function App() {
     );
   };
 
-  // Reset State
-  const handleReset = () => {
-    setItems([]);
-    setFileName('');
-    setFileSize(0);
-    setRawHeader(undefined);
-    setDetectedEncoding('');
-    setGameColumns([]);
-    setGameOriginalStructure(null);
+  // Reset State for current mode
+  const handleReset = async () => {
+    const defaultSession = createDefaultSession(mode);
+    sessionsRef.current[mode] = defaultSession;
+    await clearSessionInDb(mode);
+    applySessionState(defaultSession);
     showToast(t.allDataReset, 'info');
   };
 
@@ -1156,6 +1450,8 @@ export default function App() {
         onOpenBilingualModal={() => setIsBilingualModalOpen(true)}
         isBilingualActive={bilingualConfig.enabled && mode === 'cinema'}
         userApiKey={userApiKey}
+        activeProvider={activeAiProvider}
+        customProviderName={customProviderConfig.name || customProviderConfig.model}
         onExport={handleExport}
         onReset={handleReset}
         hasSubtitles={items.length > 0}
@@ -1174,9 +1470,9 @@ export default function App() {
         {/* Upload Zone */}
         <FileUpload
           mode={mode}
-          onFileSelect={() => {}}
+          onFileSelect={(buffer, name, size, enc) => processBufferData(buffer, name, size, mode, enc)}
           selectedEncoding={selectedEncoding}
-          setSelectedEncoding={setSelectedEncoding}
+          setSelectedEncoding={handleEncodingChange}
           detectedEncoding={detectedEncoding}
           currentFileName={fileName}
           currentFileSize={fileSize}
@@ -1221,6 +1517,9 @@ export default function App() {
           setRateLimitPacing={handleToggleRateLimitPacing}
           selectedModel={selectedModel}
           setSelectedModel={handleSelectModel}
+          activeProvider={activeAiProvider}
+          customProviderConfig={customProviderConfig}
+          onOpenApiKeyModal={() => setIsApiKeyModalOpen(true)}
         />
 
         {/* Translation Progress Bar (Shows when translating) */}
@@ -1235,11 +1534,20 @@ export default function App() {
             onPauseToggle={() => setIsPaused(!isPaused)}
             onCancel={() => {
               cancelTranslationRef.current = true;
+              isTranslatingRef.current = false;
+              activeJobIdRef.current = '';
+              if (activeAbortControllerRef.current) {
+                try { activeAbortControllerRef.current.abort(); } catch {}
+                activeAbortControllerRef.current = null;
+              }
               setPacingRemainingSec(null);
+              setRetryInfo(null);
               setIsTranslating(false);
             }}
             uiLang={uiLang}
-            selectedModel={activeRunningModel || selectedModel}
+            selectedModel={activeRunningModel || (activeAiProvider === 'custom' ? (customProviderConfig.model || 'Custom Model') : selectedModel)}
+            activeProvider={activeAiProvider}
+            customProviderConfig={customProviderConfig}
             isFallbackActive={isFallbackActive}
             rateLimitPacing={rateLimitPacing}
             pacingRemainingSec={pacingRemainingSec}
@@ -1337,7 +1645,7 @@ export default function App() {
         </div>
       </footer>
 
-      {/* User Gemini API Key (BYOK) Modal */}
+      {/* User API Key & Provider (BYOK) Modal */}
       <ApiKeyModal
         isOpen={isApiKeyModalOpen}
         onClose={() => setIsApiKeyModalOpen(false)}
@@ -1345,6 +1653,10 @@ export default function App() {
         onSaveKey={handleSaveApiKey}
         onClearKey={handleClearApiKey}
         uiLang={uiLang}
+        activeProvider={activeAiProvider}
+        onProviderChange={handleProviderChange}
+        customConfig={customProviderConfig}
+        onSaveCustomConfig={handleSaveCustomConfig}
       />
 
       {/* Bilingual Subtitle Customizer Modal (Cinema Mode) */}

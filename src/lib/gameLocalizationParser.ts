@@ -7,7 +7,7 @@ import { detectEncodingAndDecodeText, createUtf8BomBlob, createUtf8Blob } from '
  * Regex for identifying in-game variables, formatting tags, and placeholders
  * e.g. {player_name}, {0}, %s, %d, $amount, \n, \r, \t, <b>, <color=#FF0000>, <font=Title>
  */
-export const GAME_VARIABLE_REGEX = /(\{[a-zA-Z0-9_]+\}|\{\d+\}|%[0-9]*[sdif]|%[a-zA-Z0-9_]+|\$[a-zA-Z0-9_]+|<[^>]+>|\\n|\\r|\\t|\[[a-zA-Z0-9_]+\])/g;
+export const GAME_VARIABLE_REGEX = /(\{[a-zA-Z0-9_.-]+\}|\{\d+\}|%[0-9]*[sdif]|%[a-zA-Z0-9_]+|\$[a-zA-Z0-9_]+|<[^>]+>|\\n|\\r|\\t|\[[a-zA-Z0-9_]+\])/g;
 
 export function extractVariables(text: string): string[] {
   if (!text) return [];
@@ -17,6 +17,56 @@ export function extractVariables(text: string): string[] {
 }
 
 export const extractGameVariables = extractVariables;
+
+/**
+ * Validates variable preservation between source and translated strings as a multiset (Finding 16B)
+ */
+export interface VariableValidationResult {
+  isValid: boolean;
+  missingVariables: string[];
+  extraVariables: string[];
+}
+
+export function validateVariablesMultiset(source: string, target: string): VariableValidationResult {
+  const getCounts = (str: string) => {
+    const counts = new Map<string, number>();
+    const matches = str.match(GAME_VARIABLE_REGEX) || [];
+    for (const m of matches) {
+      counts.set(m, (counts.get(m) || 0) + 1);
+    }
+    return counts;
+  };
+
+  const srcCounts = getCounts(source);
+  const tgtCounts = getCounts(target);
+
+  const missingVariables: string[] = [];
+  const extraVariables: string[] = [];
+
+  srcCounts.forEach((srcCount, token) => {
+    const tgtCount = tgtCounts.get(token) || 0;
+    if (tgtCount < srcCount) {
+      for (let i = 0; i < srcCount - tgtCount; i++) {
+        missingVariables.push(token);
+      }
+    }
+  });
+
+  tgtCounts.forEach((tgtCount, token) => {
+    const srcCount = srcCounts.get(token) || 0;
+    if (tgtCount > srcCount) {
+      for (let i = 0; i < tgtCount - srcCount; i++) {
+        extraVariables.push(token);
+      }
+    }
+  });
+
+  return {
+    isValid: missingVariables.length === 0 && extraVariables.length === 0,
+    missingVariables,
+    extraVariables,
+  };
+}
 
 /**
  * Detect game localization format from file name or extension
@@ -51,7 +101,7 @@ export async function parseGameLocalizationFile(
     return parseXLSX(buffer);
   }
 
-  const { text } = detectEncodingAndDecodeText(buffer);
+  const { text } = detectEncodingAndDecodeText(buffer, forcedEncoding);
   const normalized = text.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 
   if (format === 'csv') {
@@ -67,9 +117,9 @@ export async function parseGameLocalizationFile(
 
 /**
  * Parse CSV files with PapaParse supporting multiline quotes, paragraphs, and special characters
+ * Preserves detected delimiter and headerless state (Finding 08B)
  */
 function parseCSV(content: string): ParseGameResult {
-  // Strip BOM if present
   const cleanContent = content.replace(/^\uFEFF/, '').trim();
   if (!cleanContent) {
     return {
@@ -84,7 +134,6 @@ function parseCSV(content: string): ParseGameResult {
     };
   }
 
-  // First attempt: Parse with headers enabled
   let parsed = Papa.parse(cleanContent, {
     header: true,
     skipEmptyLines: 'greedy',
@@ -93,10 +142,13 @@ function parseCSV(content: string): ParseGameResult {
     transformHeader: (h) => (h ? h.trim() : ''),
   });
 
+  const detectedDelimiter = parsed.meta.delimiter || ',';
   let columns = (parsed.meta.fields || []).filter((c) => c && c.trim() !== '');
   let rawRows = (parsed.data as Record<string, any>[]).filter(
     (row) => row && typeof row === 'object' && Object.values(row).some((val) => val !== undefined && val !== null && String(val).trim() !== '')
   );
+
+  let hasHeaders = true;
 
   // Fallback if header parsing yielded no valid columns or failed
   if (columns.length === 0 || rawRows.length === 0) {
@@ -112,11 +164,11 @@ function parseCSV(content: string): ParseGameResult {
     );
 
     if (rawData.length > 0) {
-      // First row as headers if available, or generate default column names
       const firstRow = rawData[0];
       const hasHeaderCandidate = firstRow.every((cell) => typeof cell === 'string' && cell.length < 100);
-      
+
       if (hasHeaderCandidate && rawData.length > 1) {
+        hasHeaders = true;
         columns = firstRow.map((c, i) => String(c || `Column_${i + 1}`).trim());
         rawRows = rawData.slice(1).map((rowArr) => {
           const rowObj: Record<string, any> = {};
@@ -126,8 +178,9 @@ function parseCSV(content: string): ParseGameResult {
           return rowObj;
         });
       } else {
+        hasHeaders = false;
         const maxCols = Math.max(...rawData.map((r) => r.length), 2);
-        columns = Array.from({ length: maxCols }, (_, i) => `Column_${i + 1}`);
+        columns = Array.from({ length: maxCols }, (_, i) => `Col_${i + 1}`);
         rawRows = rawData.map((rowArr) => {
           const rowObj: Record<string, any> = {};
           columns.forEach((col, idx) => {
@@ -139,7 +192,6 @@ function parseCSV(content: string): ParseGameResult {
     }
   }
 
-  // Ensure all columns exist across all rows to avoid undefined indexing
   rawRows = rawRows.map((row) => {
     const cleanRow: Record<string, any> = { ...row };
     columns.forEach((col) => {
@@ -150,7 +202,6 @@ function parseCSV(content: string): ParseGameResult {
     return cleanRow;
   });
 
-  // Heuristically suggest source, target, and key columns
   let sourceCol = '';
   let targetCol = '';
   let keyCol = '';
@@ -158,7 +209,6 @@ function parseCSV(content: string): ParseGameResult {
 
   const lowerCols = columns.map((c) => c.toLowerCase());
 
-  // Source column heuristic (dialogue, text, original, en, string, value, content, etc.)
   const sourceKeywords = ['source_text', 'source text', 'source', 'dialogue', 'dialog', 'speech', 'text', 'original', 'en', 'english', 'string', 'value', 'line', 'msg', 'message', 'content', 'body', 'paragraph', 'description'];
   for (const kw of sourceKeywords) {
     const foundIdx = lowerCols.findIndex((c) => c === kw || c.includes(kw));
@@ -171,7 +221,6 @@ function parseCSV(content: string): ParseGameResult {
     sourceCol = columns[0];
   }
 
-  // Target column heuristic (target, translation, translated, fa, persian, loc, etc.)
   const targetKeywords = ['target_text', 'target text', 'target', 'translation', 'translated', 'persian', 'fa', 'farsi', 'loc', 'localized', 'dest', 'result'];
   for (const kw of targetKeywords) {
     const foundIdx = lowerCols.findIndex((c, colIndex) => (c === kw || c.includes(kw)) && columns[colIndex] !== sourceCol);
@@ -184,7 +233,6 @@ function parseCSV(content: string): ParseGameResult {
     targetCol = columns.find((c) => c !== sourceCol && !c.toLowerCase().includes('id') && !c.toLowerCase().includes('key')) || 'Translation';
   }
 
-  // Key column heuristic (id, key, name, string_id, code, tag, etc.)
   const keyKeywords = ['string_id', 'id', 'key', 'name', 'code', 'tag', 'identifier', 'entry', 'guid', 'label'];
   for (const kw of keyKeywords) {
     const foundIdx = lowerCols.findIndex((c, colIndex) => (c === kw || c.endsWith('_id') || c.startsWith('id_') || c === 'key') && columns[colIndex] !== sourceCol);
@@ -194,7 +242,6 @@ function parseCSV(content: string): ParseGameResult {
     }
   }
 
-  // Context column heuristic (speaker, character, category, comment, notes, actor, type)
   const contextKeywords = ['speaker', 'character', 'context', 'category', 'comment', 'notes', 'actor', 'type', 'section'];
   for (const kw of contextKeywords) {
     const foundIdx = lowerCols.findIndex((c, colIndex) => {
@@ -233,14 +280,14 @@ function parseCSV(content: string): ParseGameResult {
       targetColumn: targetCol || 'Translation',
       keyColumn: keyCol || undefined,
       contextColumn: contextCol || undefined,
-      hasHeaders: true,
+      hasHeaders,
     },
-    originalRawStructure: { rawRows, columns },
+    originalRawStructure: { rawRows, columns, delimiter: detectedDelimiter, hasHeaders },
   };
 }
 
 /**
- * Parse XLSX files using ExcelJS
+ * Parse XLSX files preserving all worksheet columns and sheet metadata (Finding 07B)
  */
 async function parseXLSX(buffer: ArrayBuffer): Promise<ParseGameResult> {
   const workbook = new ExcelJS.Workbook();
@@ -276,7 +323,6 @@ async function parseXLSX(buffer: ArrayBuffer): Promise<ParseGameResult> {
     return rowObj;
   });
 
-  // Utilize the CSV mapping logic for column detection
   const lowerCols = headerRow.map((c) => c.toLowerCase());
   let sourceCol = headerRow[0];
   let targetCol = headerRow.length > 1 ? headerRow[1] : 'Translation';
@@ -336,12 +382,13 @@ async function parseXLSX(buffer: ArrayBuffer): Promise<ParseGameResult> {
       contextColumn: contextCol || undefined,
       hasHeaders: true,
     },
-    originalRawStructure: { rawRows, headerRow },
+    originalRawStructure: { rawRows, headerRow, sheetName: worksheet.name },
   };
 }
 
 /**
  * Parse JSON files (flat dictionary, nested keys, or array of dialogue objects)
+ * Supports dotted keys without false nesting and guards null values (Findings 02B, 05B)
  */
 function parseJSON(content: string): ParseGameResult {
   let parsed: any;
@@ -364,7 +411,7 @@ function parseJSON(content: string): ParseGameResult {
           originalText: obj,
           translatedText: '',
           variables: extractVariables(obj),
-          rawRowData: { value: obj },
+          rawRowData: { value: obj, isRawString: true, index: idx },
         });
       } else if (typeof obj === 'object' && obj !== null) {
         const textKey = Object.keys(obj).find((k) => ['text', 'dialogue', 'original', 'msg', 'source', 'en', 'value', 'line'].includes(k.toLowerCase())) || Object.keys(obj)[0];
@@ -372,8 +419,8 @@ function parseJSON(content: string): ParseGameResult {
         const idKey = Object.keys(obj).find((k) => ['id', 'key', 'name', 'tag', 'identifier'].includes(k.toLowerCase()));
         const speakerKey = Object.keys(obj).find((k) => ['speaker', 'character', 'actor', 'name'].includes(k.toLowerCase()) && k !== idKey);
 
-        const origText = String(obj[textKey] || '');
-        const transText = transKey ? String(obj[transKey] || '') : '';
+        const origText = String(obj[textKey] ?? '');
+        const transText = transKey ? String(obj[transKey] ?? '') : '';
         const keyName = idKey ? String(obj[idKey]) : `ROW_${idx + 1}`;
         const speakerName = speakerKey ? String(obj[speakerKey]) : undefined;
 
@@ -384,7 +431,12 @@ function parseJSON(content: string): ParseGameResult {
           translatedText: transText,
           context: speakerName,
           variables: extractVariables(origText),
-          rawRowData: obj,
+          rawRowData: {
+            ...obj,
+            _sourceKey: textKey,
+            _targetKey: transKey || 'translation',
+            _index: idx,
+          },
         });
       }
     });
@@ -398,40 +450,42 @@ function parseJSON(content: string): ParseGameResult {
 
   // Case 2: Object hierarchy / Key-Value map
   if (typeof parsed === 'object' && parsed !== null) {
-    // Flatten nested objects into dot notation
-    function flattenObject(obj: Record<string, any>, prefix = '') {
+    function flattenObject(obj: Record<string, any>, pathTokens: string[] = []) {
       for (const key of Object.keys(obj)) {
-        const fullKey = prefix ? `${prefix}.${key}` : key;
+        const currentTokens = [...pathTokens, key];
         const val = obj[key];
 
         if (typeof val === 'string') {
           items.push({
             id: autoId++,
-            key: fullKey,
+            key: currentTokens.join('.'),
             originalText: val,
             translatedText: '',
             variables: extractVariables(val),
+            rawRowData: { pathTokens: currentTokens },
           });
-        } else if (typeof val === 'number' || typeof val === 'boolean') {
-          // Skip pure non-string or store as key
+        } else if (typeof val === 'number' || typeof val === 'boolean' || val === null) {
           continue;
-        } else if (typeof val === 'object' && val !== null) {
+        } else if (typeof val === 'object') {
           if (Array.isArray(val)) {
             val.forEach((arrItem, arrIdx) => {
+              if (arrItem === null || arrItem === undefined) return;
+              const arrTokens = [...currentTokens, `[${arrIdx}]`];
               if (typeof arrItem === 'string') {
                 items.push({
                   id: autoId++,
-                  key: `${fullKey}[${arrIdx}]`,
+                  key: `${currentTokens.join('.')}[${arrIdx}]`,
                   originalText: arrItem,
                   translatedText: '',
                   variables: extractVariables(arrItem),
+                  rawRowData: { pathTokens: arrTokens },
                 });
               } else if (typeof arrItem === 'object') {
-                flattenObject(arrItem, `${fullKey}[${arrIdx}]`);
+                flattenObject(arrItem, arrTokens);
               }
             });
           } else {
-            flattenObject(val, fullKey);
+            flattenObject(val, currentTokens);
           }
         }
       }
@@ -450,63 +504,83 @@ function parseJSON(content: string): ParseGameResult {
 }
 
 /**
- * Parse plain text files (.txt)
+ * Parse plain text files (.txt) preserving comments, blank lines, and original delimiters (Finding 06B)
  */
 function parseTXT(content: string): ParseGameResult {
   const lines = content.split('\n');
   const items: GameLocalizationItem[] = [];
+  const rawEntries: any[] = [];
   let autoId = 1;
 
   for (let i = 0; i < lines.length; i++) {
     const rawLine = lines[i];
     const trimmed = rawLine.trim();
-    if (!trimmed) continue;
 
-    // Check for "KEY = Value" or "KEY: Value" pattern common in game localization
-    const kvMatch = trimmed.match(/^([A-Za-z0-9_.-]+)\s*[:=]\s*(.*)$/);
+    // Preserve blank lines
+    if (!trimmed) {
+      rawEntries.push({ type: 'blank', raw: rawLine });
+      continue;
+    }
+
+    // Preserve comments starting with #, //, or ;
+    if (trimmed.startsWith('#') || trimmed.startsWith('//') || trimmed.startsWith(';')) {
+      rawEntries.push({ type: 'comment', raw: rawLine });
+      continue;
+    }
+
+    // Match KEY := Value, KEY = Value, or KEY: Value
+    const kvMatch = rawLine.match(/^([^:=]+?)\s*(:=|=|:)\s*(.*)$/);
     if (kvMatch) {
-      const key = kvMatch[1];
-      const val = kvMatch[2];
+      const key = kvMatch[1].trim();
+      const delimiter = kvMatch[2];
+      const val = kvMatch[3];
+      const itemId = autoId++;
       items.push({
-        id: autoId++,
+        id: itemId,
         key,
         originalText: val,
         translatedText: '',
         variables: extractVariables(val),
-        rawRowData: { delimiter: trimmed.includes(':') ? ':' : '=' },
+        rawRowData: { delimiter, rawLine },
       });
+      rawEntries.push({ type: 'item', itemId, key, delimiter });
     } else {
+      const itemId = autoId++;
       items.push({
-        id: autoId++,
-        key: `LINE_${autoId}`,
+        id: itemId,
+        key: `LINE_${itemId}`,
         originalText: trimmed,
         translatedText: '',
         variables: extractVariables(trimmed),
+        rawRowData: { delimiter: '', rawLine },
       });
+      rawEntries.push({ type: 'item', itemId, key: `LINE_${itemId}`, delimiter: '' });
     }
   }
 
   return {
     items,
     format: 'txt',
-    originalRawStructure: { type: 'txt' },
+    originalRawStructure: { type: 'txt', rawEntries },
   };
 }
 
 /**
- * Rebuild and Export Game CSV with UTF-8 BOM, preserving all structural columns in exact order
+ * Rebuild and Export Game CSV with UTF-8 BOM, preserving all structural columns in exact order and delimiter (Finding 08B)
  */
 export function exportGameCSV(
   items: GameLocalizationItem[],
   mapping: GameColumnMapping,
-  originalStructure?: any
+  originalStructure?: any,
+  appendRTLMarkers = true
 ): Blob {
   const sourceCol = mapping.sourceColumn || 'Source';
   const targetCol = mapping.targetColumn || 'Translation';
   const keyCol = mapping.keyColumn;
   const originalColumns: string[] = originalStructure?.columns || [];
+  const delimiter = originalStructure?.delimiter || ',';
+  const hasHeaders = mapping.hasHeaders !== false && originalStructure?.hasHeaders !== false;
 
-  // Determine all export fields in correct sequence
   const finalFields: string[] = [];
   if (originalColumns.length > 0) {
     originalColumns.forEach((col) => {
@@ -524,16 +598,15 @@ export function exportGameCSV(
   }
 
   const rows: Record<string, any>[] = items.map((item) => {
-    // Preserve full rawRowData structure
     const rowObj: Record<string, any> = item.rawRowData ? { ...item.rawRowData } : {};
-    
+
     if (keyCol && item.key) {
       rowObj[keyCol] = item.key;
     }
     rowObj[sourceCol] = item.originalText;
-    rowObj[targetCol] = item.translatedText || item.originalText;
+    const finalTrans = item.translatedText || item.originalText;
+    rowObj[targetCol] = appendRTLMarkers ? appendHiddenRTLMarker(finalTrans) : finalTrans;
 
-    // Fill missing fields with empty string for clean CSV alignment
     finalFields.forEach((field) => {
       if (rowObj[field] === undefined || rowObj[field] === null) {
         rowObj[field] = '';
@@ -543,39 +616,52 @@ export function exportGameCSV(
     return rowObj;
   });
 
-  const csvString = Papa.unparse({
-    fields: finalFields.length > 0 ? finalFields : undefined,
-    data: rows,
-  }, {
-    quotes: true, // Quote cells with quotes, commas, or line breaks/paragraphs per RFC 4180
-    header: true,
-    newline: '\r\n', // Standard CRLF for universal Excel & Game Engine compatibility
-  });
+  const csvString = Papa.unparse(
+    {
+      fields: hasHeaders && finalFields.length > 0 ? finalFields : undefined,
+      data: rows,
+    },
+    {
+      delimiter,
+      quotes: true,
+      header: hasHeaders,
+      newline: '\r\n',
+    }
+  );
 
   return createUtf8BomBlob(csvString, 'text/csv;charset=utf-8');
 }
 
 /**
  * Rebuild and Export Game JSON with preserved structure and keys
+ * Never overwrites source column when target column is configured (Finding 04B, 05B)
  */
 export function exportGameJSON(
   items: GameLocalizationItem[],
-  originalStructure?: any
+  originalStructure?: any,
+  appendRTLMarkers = true
 ): Blob {
   if (originalStructure?.type === 'array' && Array.isArray(originalStructure.data)) {
-    // Reconstruct array of objects
     const resultArr = originalStructure.data.map((origObj: any, index: number) => {
       const item = items[index];
       if (!item) return origObj;
 
-      if (typeof origObj === 'string') {
-        return item.translatedText || item.originalText;
+      const translated = item.translatedText || item.originalText;
+      const finalTrans = appendRTLMarkers ? appendHiddenRTLMarker(translated) : translated;
+
+      if (typeof origObj === 'string' || item.rawRowData?.isRawString) {
+        return finalTrans;
       }
 
       const copy = { ...origObj };
-      // Locate translation field or update existing text field
-      const textKey = Object.keys(copy).find((k) => ['text', 'dialogue', 'original', 'msg', 'source', 'en', 'value', 'line'].includes(k.toLowerCase())) || 'text';
-      copy[textKey] = item.translatedText || item.originalText;
+      const targetKey = item.rawRowData?._targetKey || 'translation';
+      const sourceKey = item.rawRowData?._sourceKey || 'text';
+
+      if (targetKey !== sourceKey) {
+        copy[targetKey] = finalTrans;
+      } else {
+        copy[sourceKey] = finalTrans;
+      }
       return copy;
     });
 
@@ -584,35 +670,39 @@ export function exportGameJSON(
   }
 
   if (originalStructure?.type === 'object' && originalStructure.data) {
-    // Deep clone original object and replace leaf string nodes
     const rootObj = JSON.parse(JSON.stringify(originalStructure.data));
 
-    // Helper to set nested value by dot path (e.g. "dialogues.act1.title" or "menu[0]")
-    function setDeepValue(obj: any, path: string, value: string) {
-      const parts = path.split('.');
+    function setDeepValue(obj: any, pathTokens: string[], value: string) {
       let current = obj;
-
-      for (let i = 0; i < parts.length - 1; i++) {
-        const part = parts[i];
-        if (!current[part]) current[part] = {};
-        current = current[part];
+      for (let i = 0; i < pathTokens.length - 1; i++) {
+        const token = pathTokens[i];
+        if (token.startsWith('[') && token.endsWith(']')) {
+          const idx = parseInt(token.slice(1, -1), 10);
+          if (!current[idx]) current[idx] = {};
+          current = current[idx];
+        } else {
+          if (!current[token]) current[token] = {};
+          current = current[token];
+        }
       }
 
-      const lastPart = parts[parts.length - 1];
-      if (lastPart.includes('[') && lastPart.endsWith(']')) {
-        const arrayKey = lastPart.substring(0, lastPart.indexOf('['));
-        const arrayIdx = parseInt(lastPart.substring(lastPart.indexOf('[') + 1, lastPart.length - 1), 10);
-        if (current[arrayKey] && Array.isArray(current[arrayKey])) {
-          current[arrayKey][arrayIdx] = value;
+      const lastToken = pathTokens[pathTokens.length - 1];
+      if (lastToken.startsWith('[') && lastToken.endsWith(']')) {
+        const idx = parseInt(lastToken.slice(1, -1), 10);
+        if (Array.isArray(current)) {
+          current[idx] = value;
         }
       } else {
-        current[lastPart] = value;
+        current[lastToken] = value;
       }
     }
 
     items.forEach((item) => {
-      if (item.key) {
-        setDeepValue(rootObj, item.key, item.translatedText || item.originalText);
+      const trans = item.translatedText || item.originalText;
+      const finalTrans = appendRTLMarkers ? appendHiddenRTLMarker(trans) : trans;
+      const tokens: string[] = item.rawRowData?.pathTokens || (item.key ? item.key.split('.') : []);
+      if (tokens.length > 0) {
+        setDeepValue(rootObj, tokens, finalTrans);
       }
     });
 
@@ -620,10 +710,11 @@ export function exportGameJSON(
     return createUtf8Blob(jsonStr, 'application/json;charset=utf-8');
   }
 
-  // Fallback: key-value dictionary object
+  // Fallback dictionary
   const dictObj: Record<string, string> = {};
   items.forEach((item) => {
-    dictObj[item.key || `STRING_${item.id}`] = item.translatedText || item.originalText;
+    const trans = item.translatedText || item.originalText;
+    dictObj[item.key || `STRING_${item.id}`] = appendRTLMarkers ? appendHiddenRTLMarker(trans) : trans;
   });
 
   const jsonStr = JSON.stringify(dictObj, null, 2);
@@ -631,45 +722,63 @@ export function exportGameJSON(
 }
 
 /**
- * Rebuild and Export Game XLSX workbook
+ * Rebuild and Export Game XLSX workbook preserving all original columns and formatting (Finding 07B)
  */
 export async function exportGameXLSX(
   items: GameLocalizationItem[],
-  mapping: GameColumnMapping
+  mapping: GameColumnMapping,
+  originalStructure?: any,
+  appendRTLMarkers = true
 ): Promise<Blob> {
   const workbook = new ExcelJS.Workbook();
-  workbook.creator = 'Universal Subtitle & Game Translator';
+  workbook.creator = 'SubGame Lab';
   workbook.created = new Date();
 
-  const worksheet = workbook.addWorksheet('Localization');
+  const sheetName = originalStructure?.sheetName || 'Localization';
+  const worksheet = workbook.addWorksheet(sheetName);
 
   const sourceCol = mapping.sourceColumn || 'Source';
   const targetCol = mapping.targetColumn || 'Translation';
-  const keyCol = mapping.keyColumn || 'ID';
+  const keyCol = mapping.keyColumn;
+  const originalColumns: string[] = originalStructure?.headerRow || [];
 
-  // Define columns
-  worksheet.columns = [
-    { header: keyCol, key: 'key', width: 25 },
-    { header: sourceCol, key: 'source', width: 45 },
-    { header: targetCol, key: 'target', width: 45 },
-  ];
+  const finalColumns: string[] = [];
+  if (originalColumns.length > 0) {
+    originalColumns.forEach((c) => {
+      if (!finalColumns.includes(c)) finalColumns.push(c);
+    });
+    if (targetCol && !finalColumns.includes(targetCol)) {
+      finalColumns.push(targetCol);
+    }
+  } else {
+    if (keyCol) finalColumns.push(keyCol);
+    finalColumns.push(sourceCol);
+    if (targetCol !== sourceCol) finalColumns.push(targetCol);
+  }
 
-  // Header row styling
+  worksheet.columns = finalColumns.map((colName) => ({
+    header: colName,
+    key: colName,
+    width: colName === sourceCol || colName === targetCol ? 45 : 20,
+  }));
+
   const headerRow = worksheet.getRow(1);
   headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
   headerRow.fill = {
     type: 'pattern',
     pattern: 'solid',
-    fgColor: { argb: 'FF4F46E5' }, // Indigo color
+    fgColor: { argb: 'FF4F46E5' },
   };
 
-  // Add data rows
   items.forEach((item) => {
-    worksheet.addRow({
-      key: item.key || `ID_${item.id}`,
-      source: item.originalText,
-      target: item.translatedText || item.originalText,
-    });
+    const rowObj: Record<string, any> = item.rawRowData ? { ...item.rawRowData } : {};
+    if (keyCol && item.key) {
+      rowObj[keyCol] = item.key;
+    }
+    rowObj[sourceCol] = item.originalText;
+    const finalTrans = item.translatedText || item.originalText;
+    rowObj[targetCol] = appendRTLMarkers ? appendHiddenRTLMarker(finalTrans) : finalTrans;
+    worksheet.addRow(rowObj);
   });
 
   const buffer = await workbook.xlsx.writeBuffer();
@@ -677,37 +786,74 @@ export async function exportGameXLSX(
 }
 
 /**
- * Rebuild and Export Game TXT
+ * Rebuild and Export Game TXT preserving comments, blank lines, and original delimiters (Finding 06B)
  */
-export function exportGameTXT(items: GameLocalizationItem[]): Blob {
-  const lines = items.map((item) => {
-    const text = item.translatedText || item.originalText;
-    const delimiter = item.rawRowData?.delimiter || '=';
-    if (item.key && !item.key.startsWith('LINE_')) {
-      return `${item.key} ${delimiter} ${text}`;
-    }
-    return text;
-  });
+export function exportGameTXT(
+  items: GameLocalizationItem[],
+  originalStructure?: any,
+  appendRTLMarkers = true
+): Blob {
+  const rawEntries = originalStructure?.rawEntries;
+  let content = '';
 
-  const content = lines.join('\n');
+  if (Array.isArray(rawEntries) && rawEntries.length > 0) {
+    const itemsMap = new Map<number, GameLocalizationItem>();
+    items.forEach((it) => itemsMap.set(it.id, it));
+
+    const lines: string[] = [];
+    for (const entry of rawEntries) {
+      if (entry.type === 'blank') {
+        lines.push('');
+      } else if (entry.type === 'comment') {
+        lines.push(entry.raw);
+      } else if (entry.type === 'item') {
+        const item = itemsMap.get(entry.itemId);
+        if (item) {
+          const trans = item.translatedText || item.originalText;
+          const finalTrans = appendRTLMarkers ? appendHiddenRTLMarker(trans) : trans;
+          const delimiter = entry.delimiter ? ` ${entry.delimiter} ` : '';
+          if (item.key && !item.key.startsWith('LINE_')) {
+            lines.push(`${item.key}${delimiter}${finalTrans}`);
+          } else {
+            lines.push(finalTrans);
+          }
+        }
+      }
+    }
+    content = lines.join('\n');
+  } else {
+    const lines = items.map((item) => {
+      const trans = item.translatedText || item.originalText;
+      const finalTrans = appendRTLMarkers ? appendHiddenRTLMarker(trans) : trans;
+      const delimiter = item.rawRowData?.delimiter ? ` ${item.rawRowData.delimiter} ` : ' = ';
+      if (item.key && !item.key.startsWith('LINE_')) {
+        return `${item.key}${delimiter}${finalTrans}`;
+      }
+      return finalTrans;
+    });
+    content = lines.join('\n');
+  }
+
   return createUtf8BomBlob(content, 'text/plain;charset=utf-8');
 }
 
 /**
- * Checks if a game localization string or subtitle line is purely code, numbers, punctuation, or placeholder
+ * Checks if a game localization string or subtitle line is purely code, numbers, punctuation, or placeholder.
+ * Fully multilingual using Unicode property escapes \p{L} and \p{N} so Russian, Chinese, Japanese, Korean,
+ * Hebrew, Arabic, etc. are NOT skipped as code! (Finding 01B)
  */
 export function isCodeOnlyOrSkippable(text: string): boolean {
   if (!text) return true;
   const trimmed = text.trim();
   if (trimmed.length === 0) return true;
 
-  // Pure digits or decimal numbers (e.g. "123", "99.9", "0x1A")
-  if (/^0x[0-9a-fA-F]+$/.test(trimmed) || /^-?\d+(\.\d+)?$/.test(trimmed)) {
+  // Pure digits, hex, or decimal numbers (e.g. "123", "99.9", "0x1A", "#FFFFFF")
+  if (/^0x[0-9a-fA-F]+$/.test(trimmed) || /^#[0-9a-fA-F]{3,8}$/.test(trimmed) || /^-?\d+(\.\d+)?$/.test(trimmed)) {
     return true;
   }
 
-  // Pure symbol / punctuation line (e.g. "---", "===", "...", ">>>", "[ ]", "/***")
-  if (/^[^a-zA-Z\u0600-\u06FF\u0750-\u077F\uFB50-\uFDFF\uFE70-\uFEFF0-9]+$/.test(trimmed)) {
+  // Pure symbol / punctuation line without any linguistic characters (\p{L}) or digits (\p{N})
+  if (/^[^\p{L}\p{N}]+$/u.test(trimmed)) {
     return true;
   }
 
@@ -733,13 +879,10 @@ export function isCodeOnlyOrSkippable(text: string): boolean {
  */
 export function appendHiddenRTLMarker(text: string): string {
   if (!text) return text;
-  // If text already has RTL mark or ends with right-to-left mark, don't duplicate
   if (text.endsWith('\u200F')) return text;
-  // Check if string contains Persian/Arabic characters
   const hasRTL = /[\u0600-\u06FF\u0750-\u077F\uFB50-\uFDFF\uFE70-\uFEFF]/.test(text);
   if (hasRTL) {
     return `${text}\u200F`;
   }
   return text;
 }
-
