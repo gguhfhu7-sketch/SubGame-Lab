@@ -6,7 +6,7 @@
 
 [🇬🇧 English](#english) · [🇮🇷 فارسی](#persian) · [🇸🇦 العربية](#arabic)
 
-[Live demo](https://subgame-lab-production.up.railway.app/) · [GitHub](https://github.com/gguhfhu7-sketch/SubGame-Lab) · [Telegram](https://t.me/MySaeedLab) · [Introduction video](https://youtu.be/4cSHIzVGA20)
+[Live demo](https://subgame-lab-production-5e1a.up.railway.app/) · [GitHub](https://github.com/gguhfhu7-sketch/SubGame-Lab) · [Telegram](https://t.me/MySaeedLab)
 
 ---
 
@@ -17,7 +17,7 @@
 
 **More provider choice, separate Cinema/Game workspaces, and improvements to translation reliability.**
 
-- **Custom Provider / BYOK:** Gemini is no longer the only option for text translation. Connect an OpenAI-compatible Chat Completions API using your own Base URL, API Key, and Model ID. If Gemini is unavailable to you, select Custom Provider and continue with a compatible service you can access.
+- **Custom Provider / BYOK:** Gemini is no longer the only option for text translation. Connect an compatible text-generation API using your own Base URL, API Key, and Model ID. If Gemini is unavailable to you, select Custom Provider and continue with a compatible service you can access.
 - **Expanded Gemini model catalog:** The application now lists additional Flash options alongside Pro and progressive streaming, with an in-app model guide. The current configured translation default is `gemini-3.8-flash`; see the model list below.
 - **Separate Cinema and Game sessions:** Each mode has its own document, file format, translations, and settings. Switching modes saves the current workspace and restores the other, instead of showing a cinema file as a game document.
 - **Browser autosave:** Mode sessions are saved locally using IndexedDB/Dexie and loaded again on startup. Autosave is not cloud synchronization or a substitute for exporting backups.
@@ -55,13 +55,13 @@ Multiple target languages, localization tones, custom instructions, adjustable b
 
 The application uses `POST /chat/completions`, a `messages` array, and `Authorization: Bearer ...`. The model must be able to return the requested JSON translation structure. The endpoint suffix is appended automatically when the supplied URL does not already end in `/chat/completions`.
 
-**Compatibility, not a provider lock-in:** OpenAI-compatible endpoints from services such as OpenAI, OpenRouter, Groq, DeepSeek, Together, or another API supplier may be usable when they meet this contract. These names are examples, not a tested compatibility matrix. An arbitrary API key alone is not sufficient: the URL, authentication scheme, endpoint, and model must match.
+**Compatibility, not a provider lock-in:** compatible text-generation API from services such as OpenRouter, Groq, DeepSeek, Together, or another API supplier may be usable when they meet this contract. These names are examples, not a tested compatibility matrix. An arbitrary API key alone is not sufficient: the URL, authentication scheme, endpoint, and model must match.
 
 **Important limits:**
 
 - No Gemini key is required for text translation or quality review through a configured Custom Provider. Gemini audio transcription and the Gemini streaming path are separate features; Custom Provider does not automatically replace them.
 - Standard Custom Provider translation is batch-based. Selecting the app's Gemini Live Stream option with a custom provider falls back to standard custom translation.
-- This version blocks local/private/metadata destinations in Custom Provider validation. A localhost Ollama or LM Studio URL will not work unchanged, even when its API is OpenAI-compatible. Do not disable network protections on a public deployment just to connect it.
+- This version blocks local/private/metadata destinations in Custom Provider validation. A localhost Ollama or LM Studio URL will not work unchanged, even when its API is compatible text-generation API. Do not disable network protections on a public deployment just to connect it.
 - Use the direct API endpoint, preferably HTTPS. Translation requests reject redirects. Avoid query-string-based URLs in this version and follow the provider's documented base-path format.
 - Connection testing checks basic reachability/authentication/model response; it does not prove that the model will produce valid JSON for every translation batch.
 - A different provider is an alternative access route, not a guarantee of free usage, unlimited quota, or exemption from that provider's policies.
@@ -126,7 +126,7 @@ BYOK credentials are stored in browser localStorage and sent to the application 
 
 **انتخاب آزادتر سرویس هوش مصنوعی، محیط مستقل سینما و بازی، و بهبود پایداری ترجمه.**
 
-- **اضافه‌شدن Custom Provider و کلید شخصی (BYOK):** ترجمهٔ متن دیگر فقط به Gemini محدود نیست. با واردکردن آدرس پایه، کلید API و شناسهٔ مدل می‌توانید از سرویس‌های سازگار با OpenAI Chat Completions استفاده کنید. اگر به Gemini دسترسی ندارید، Custom Provider را انتخاب کنید و ترجمه را با سرویس سازگارِ در دسترس خود ادامه دهید.
+- **اضافه‌شدن Custom Provider و کلید شخصی (BYOK):** ترجمهٔ متن دیگر فقط به Gemini محدود نیست. با واردکردن آدرس پایه، کلید API و شناسهٔ مدل می‌توانید از سرویس‌های سازگار با compatible text-generation API استفاده کنید. اگر به Gemini دسترسی ندارید، Custom Provider را انتخاب کنید و ترجمه را با سرویس سازگارِ در دسترس خود ادامه دهید.
 - **گسترش فهرست مدل‌های Gemini:** گزینه‌های بیشتر Flash در کنار Pro و ترجمهٔ جریانی، همراه با راهنمای مدل‌ها در برنامه قرار گرفته‌اند. پیش‌فرض ترجمه در کد فعلی `gemini-3.8-flash` است؛ فهرست کامل پایین آمده است.
 - **استقلال Cinema Mode و Game Mode:** هر مود فایل، فرمت، ترجمه‌ها و تنظیمات خودش را دارد. هنگام جابه‌جایی، وضعیت مود فعلی ذخیره و وضعیت مود مقصد بازیابی می‌شود؛ فایل سینما دیگر صرفاً با تعویض مود به فایل بازی تغییر هویت نمی‌دهد.
 - **ذخیرهٔ خودکار محلی:** وضعیت هر مود با IndexedDB و Dexie در مرورگر ذخیره و هنگام بازشدن برنامه بازیابی می‌شود. این قابلیت همگام‌سازی ابری نیست و جای نسخهٔ پشتیبان خروجی را نمی‌گیرد.
@@ -164,7 +164,7 @@ BYOK credentials are stored in browser localStorage and sent to the application 
 
 برنامه از `POST /chat/completions`، آرایهٔ `messages` و احراز هویت `Authorization: Bearer ...` استفاده می‌کند. مدل باید بتواند ساختار JSON درخواست‌شده برای ترجمه را برگرداند. اگر آدرس به `/chat/completions` ختم نشود، این پسوند خودکار اضافه می‌شود.
 
-**محدود به یک فروشنده نیستید:** APIهای سازگار از سرویس‌هایی مثل OpenAI، OpenRouter، Groq، DeepSeek، Together یا فروشندهٔ دیگر، در صورت رعایت این قرارداد قابل استفاده‌اند. این نام‌ها نمونه‌اند، نه فهرست سرویس‌های تست‌شده. «کلید از هرجا» به‌تنهایی کافی نیست؛ آدرس، روش احراز هویت، endpoint و مدل باید با برنامه سازگار باشند.
+**محدود به یک فروشنده نیستید:** APIهای سازگار از سرویس‌هایی مثل OpenRouter، Groq، DeepSeek، Together یا فروشندهٔ دیگر، در صورت رعایت این قرارداد قابل استفاده‌اند. این نام‌ها نمونه‌اند، نه فهرست سرویس‌های تست‌شده. «کلید از هرجا» به‌تنهایی کافی نیست؛ آدرس، روش احراز هویت، endpoint و مدل باید با برنامه سازگار باشند.
 
 **نکات مهم:**
 
@@ -237,7 +237,7 @@ npm start
 
 **خيارات أوسع لمزودي الذكاء الاصطناعي، ومساحات عمل منفصلة للسينما والألعاب، وتحسينات في موثوقية الترجمة.**
 
-- **إضافة Custom Provider وBYOK:** لم تعد ترجمة النصوص مقتصرة على Gemini. أدخل عنوان API الأساسي ومفتاحك ومعرّف النموذج للاتصال بخدمة متوافقة مع OpenAI Chat Completions. إذا تعذر الوصول إلى Gemini، اختر مزوداً مخصصاً متوافقاً ومتاحاً لك.
+- **إضافة Custom Provider وBYOK:** لم تعد ترجمة النصوص مقتصرة على Gemini. أدخل عنوان API الأساسي ومفتاحك ومعرّف النموذج للاتصال بخدمة متوافقة مع compatible text-generation API. إذا تعذر الوصول إلى Gemini، اختر مزوداً مخصصاً متوافقاً ومتاحاً لك.
 - **توسيع قائمة Gemini:** تتضمن الواجهة خيارات Flash إضافية إلى جانب Pro والترجمة المتدفقة، مع دليل داخل التطبيق. المعرّف الافتراضي للترجمة في الكود الحالي هو `gemini-3.8-flash`.
 - **فصل جلسات السينما والألعاب:** يحتفظ كل وضع بملفه وتنسيقه وترجماته وإعداداته. التبديل يحفظ مساحة العمل الحالية ويستعيد الأخرى، بدلاً من إظهار ملف سينمائي وكأنه ملف لعبة.
 - **حفظ محلي تلقائي:** تُحفظ الجلسات في المتصفح عبر IndexedDB وDexie وتُحمّل عند بدء التطبيق. هذه ليست مزامنة سحابية ولا تغني عن تصدير نسخ احتياطية.
@@ -269,7 +269,7 @@ npm start
 
 يستخدم التطبيق `POST /chat/completions` ومصفوفة `messages` وترويسة `Authorization: Bearer ...`. يجب أن يستطيع النموذج إرجاع بنية JSON المطلوبة للترجمة. يُضاف لاحق المسار تلقائياً إذا لم ينتهِ العنوان بـ`/chat/completions`.
 
-**لا ارتباط بمورد واحد:** قد تعمل خدمات مثل OpenAI وOpenRouter وGroq وDeepSeek وTogether أو أي مورد آخر عندما توفر endpoint متوافقاً. هذه أمثلة وليست قائمة توافق مختبرة. المفتاح وحده لا يكفي؛ يجب أن يتطابق العنوان والمصادقة والمسار والنموذج مع هذا العقد.
+**لا ارتباط بمورد واحد:** قد تعمل خدمات مثل وOpenRouter وGroq وDeepSeek وTogether أو أي مورد آخر عندما توفر endpoint متوافقاً. هذه أمثلة وليست قائمة توافق مختبرة. المفتاح وحده لا يكفي؛ يجب أن يتطابق العنوان والمصادقة والمسار والنموذج مع هذا العقد.
 
 **حدود مهمة:**
 
@@ -338,7 +338,6 @@ npm start
 ### Project links · لینک‌های پروژه · روابط المشروع
 
 - **Repository:** https://github.com/gguhfhu7-sketch/SubGame-Lab
-- **Live demo:** https://subgame-lab-production.up.railway.app/
+- **Live demo:** https://subgame-lab-production-5e1a.up.railway.app/
 - **Telegram community and announcements:** https://t.me/MySaeedLab
-- **Introduction video:** https://youtu.be/4cSHIzVGA20
 
