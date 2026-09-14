@@ -163,6 +163,7 @@ export const SAMPLE_GAME_CSV_DATA = SAMPLE_GAME_CSV_CONTENT;
 export const SAMPLE_GAME_JSON_DATA = SAMPLE_GAME_JSON_CONTENT;
 
 export const SAMPLE_SRT_CONTENT = `1
+00:00:00,500 --> 00:00:04,200
 Welcome to the <i>Universal Subtitle Translator</i>!
 
 2

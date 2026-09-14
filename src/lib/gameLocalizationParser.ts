@@ -288,6 +288,8 @@ function parseCSV(content: string): ParseGameResult {
 
 /**
  * Parse XLSX files preserving all worksheet columns and sheet metadata (Finding 07B)
+ * FIX (B15): header row is no longer blindly assumed — the same heuristic as the CSV parser
+ * decides whether row 1 is a header or DATA, so headerless game workbooks keep every record.
  */
 async function parseXLSX(buffer: ArrayBuffer): Promise<ParseGameResult> {
   const workbook = new ExcelJS.Workbook();
@@ -312,8 +314,24 @@ async function parseXLSX(buffer: ArrayBuffer): Promise<ParseGameResult> {
     };
   }
 
-  const headerRow = rows[0].map((h, i) => String(h || `Column_${i + 1}`).trim());
-  const dataRows = rows.slice(1);
+  // FIX (B15): decide whether row 1 is a header or data.
+  // Heuristic (mirrors parseCSV): the first row is treated as a header when every cell is a
+  // short string AND it does not look like plain dialogue data (header cells are usually unique
+  // identifiers, data rows frequently contain sentence-like text or numbers).
+  const firstRow = rows[0];
+  const looksLikeHeader =
+    rows.length > 1 &&
+    firstRow.every((cell) => typeof cell === 'string' && cell.trim().length > 0 && cell.trim().length < 100 && !/^\d+([.,]\d+)?$/.test(cell.trim())) &&
+    firstRow.some((cell) => {
+      const c = String(cell).trim().toLowerCase();
+      return ['source', 'text', 'original', 'id', 'key', 'target', 'translation', 'translated', 'fa', 'dialogue', 'string', 'name', 'comment', 'notes', 'speaker'].some((kw) => c === kw || c.includes(kw));
+    });
+  const hasHeaders = looksLikeHeader;
+
+  const headerRow = hasHeaders
+    ? firstRow.map((h, i) => String(h || `Column_${i + 1}`).trim())
+    : firstRow.map((_, i) => `Column_${i + 1}`);
+  const dataRows = hasHeaders ? rows.slice(1) : rows;
 
   const rawRows: Record<string, any>[] = dataRows.map((r) => {
     const rowObj: Record<string, any> = {};
@@ -328,6 +346,12 @@ async function parseXLSX(buffer: ArrayBuffer): Promise<ParseGameResult> {
   let targetCol = headerRow.length > 1 ? headerRow[1] : 'Translation';
   let keyCol = '';
   let contextCol = '';
+
+  if (!hasHeaders) {
+    // FIX (B15): with no headers, positional mapping is the only sensible choice
+    sourceCol = headerRow[0];
+    targetCol = headerRow.length > 1 ? headerRow[1] : headerRow[0];
+  }
 
   const sourceKeywords = ['source', 'text', 'original', 'en', 'english', 'dialogue', 'string', 'value'];
   for (const kw of sourceKeywords) {
@@ -380,9 +404,9 @@ async function parseXLSX(buffer: ArrayBuffer): Promise<ParseGameResult> {
       targetColumn: targetCol,
       keyColumn: keyCol || undefined,
       contextColumn: contextCol || undefined,
-      hasHeaders: true,
+      hasHeaders,
     },
-    originalRawStructure: { rawRows, headerRow, sheetName: worksheet.name },
+    originalRawStructure: { rawRows, headerRow, sheetName: worksheet.name, hasHeaders },
   };
 }
 
@@ -448,6 +472,11 @@ function parseJSON(content: string): ParseGameResult {
     };
   }
 
+  // FIX (B3) NOTE for the array case above: non-string/non-object elements (numbers, booleans,
+  // null) intentionally produce NO item, and `exportGameJSON` now maps translations back by the
+  // ORIGINAL array index (stored in rawRowData.index / rawRowData._index) instead of positional
+  // matching, so mixed-type arrays keep their shape and translations land on the right element.
+
   // Case 2: Object hierarchy / Key-Value map
   if (typeof parsed === 'object' && parsed !== null) {
     function flattenObject(obj: Record<string, any>, pathTokens: string[] = []) {
@@ -505,12 +534,20 @@ function parseJSON(content: string): ParseGameResult {
 
 /**
  * Parse plain text files (.txt) preserving comments, blank lines, and original delimiters (Finding 06B)
+ * FIX (B11): key/value detection is now STRICT — the key must look like an identifier and lines
+ * like URLs (https://...), file paths, or timestamps are kept as plain text instead of being
+ * torn into a fake key/value pair. The EXACT original separator (with its spacing) is stored so
+ * reconstruction is byte-faithful for strict game-engine parsers.
  */
 function parseTXT(content: string): ParseGameResult {
   const lines = content.split('\n');
   const items: GameLocalizationItem[] = [];
   const rawEntries: any[] = [];
   let autoId = 1;
+
+  // A plausible identifier key: starts with a letter/underscore, may contain word chars, dots,
+  // dashes and single spaces. Rejects "https", "00", "C:" (digit start), timestamps, etc.
+  const KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_.\- ]*$/;
 
   for (let i = 0; i < lines.length; i++) {
     const rawLine = lines[i];
@@ -528,12 +565,33 @@ function parseTXT(content: string): ParseGameResult {
       continue;
     }
 
-    // Match KEY := Value, KEY = Value, or KEY: Value
-    const kvMatch = rawLine.match(/^([^:=]+?)\s*(:=|=|:)\s*(.*)$/);
+    // Match KEY := Value, KEY = Value, or KEY: Value (capture the EXACT separator with spacing)
+    const kvMatch = rawLine.match(/^([^:=]+?)(\s*(:=|=|:)\s*)(.*)$/);
+    let kvAccepted = false;
+    let key = '';
+    let delimiter = '';
+    let rawSep = '';
+    let val = '';
+
     if (kvMatch) {
-      const key = kvMatch[1].trim();
-      const delimiter = kvMatch[2];
-      const val = kvMatch[3];
+      key = kvMatch[1].trim();
+      rawSep = kvMatch[2];
+      delimiter = kvMatch[3];
+      val = kvMatch[4];
+
+      // FIX (B11) strictness guards — anything failing these is plain text, not KEY=value:
+      // 1) key must be a sane identifier
+      const keyLooksValid = KEY_PATTERN.test(key) && key.length <= 128;
+      // 2) the value must not start like a URL path/protocol remainder (https://x → val "//x")
+      //    nor like a filesystem path (C:\x → val "\x")
+      const valueLooksLikePathOrUrl = /^\/{1,2}/.test(val.trim()) || /^\\/.test(val.trim());
+      // 3) the line must not be a timestamp cue (00:12:34,500 --> ...)
+      const looksLikeTimestamp = /\d{1,2}:\d{2}:\d{2}/.test(key) || trimmed.includes('-->');
+
+      kvAccepted = keyLooksValid && !valueLooksLikePathOrUrl && !looksLikeTimestamp;
+    }
+
+    if (kvAccepted) {
       const itemId = autoId++;
       items.push({
         id: itemId,
@@ -541,9 +599,9 @@ function parseTXT(content: string): ParseGameResult {
         originalText: val,
         translatedText: '',
         variables: extractVariables(val),
-        rawRowData: { delimiter, rawLine },
+        rawRowData: { delimiter, rawSep, rawLine },
       });
-      rawEntries.push({ type: 'item', itemId, key, delimiter });
+      rawEntries.push({ type: 'item', itemId, key, delimiter, rawSep });
     } else {
       const itemId = autoId++;
       items.push({
@@ -552,9 +610,9 @@ function parseTXT(content: string): ParseGameResult {
         originalText: trimmed,
         translatedText: '',
         variables: extractVariables(trimmed),
-        rawRowData: { delimiter: '', rawLine },
+        rawRowData: { delimiter: '', rawSep: '', rawLine },
       });
-      rawEntries.push({ type: 'item', itemId, key: `LINE_${itemId}`, delimiter: '' });
+      rawEntries.push({ type: 'item', itemId, key: `LINE_${itemId}`, delimiter: '', rawSep: '' });
     }
   }
 
@@ -605,7 +663,7 @@ export function exportGameCSV(
     }
     rowObj[sourceCol] = item.originalText;
     const finalTrans = item.translatedText || item.originalText;
-    rowObj[targetCol] = appendRTLMarkers ? appendHiddenRTLMarker(finalTrans) : finalTrans;
+    rowObj[targetCol] = appendRTLMarkers ? appendHiddenRTLMarker(finalTrans) : stripHiddenRTLMarker(finalTrans);
 
     finalFields.forEach((field) => {
       if (rowObj[field] === undefined || rowObj[field] === null) {
@@ -642,12 +700,24 @@ export function exportGameJSON(
   appendRTLMarkers = true
 ): Blob {
   if (originalStructure?.type === 'array' && Array.isArray(originalStructure.data)) {
+    // FIX (B3): positional mapping corrupted mixed-type arrays (numbers/booleans/null create NO
+    // item, so every index after one shifted). Each item remembers its ORIGINAL array index
+    // (strings: rawRowData.index, objects: rawRowData._index) and we map through that instead.
+    const itemByOriginalIndex = new Map<number, GameLocalizationItem>();
+    items.forEach((it) => {
+      const rd: any = it.rawRowData || {};
+      const origIdx = typeof rd._index === 'number' ? rd._index : typeof rd.index === 'number' ? rd.index : undefined;
+      if (origIdx !== undefined) {
+        itemByOriginalIndex.set(origIdx, it);
+      }
+    });
+
     const resultArr = originalStructure.data.map((origObj: any, index: number) => {
-      const item = items[index];
-      if (!item) return origObj;
+      const item = itemByOriginalIndex.get(index);
+      if (!item) return origObj; // non-text element (number/boolean/null) — untouched
 
       const translated = item.translatedText || item.originalText;
-      const finalTrans = appendRTLMarkers ? appendHiddenRTLMarker(translated) : translated;
+      const finalTrans = appendRTLMarkers ? appendHiddenRTLMarker(translated) : stripHiddenRTLMarker(translated);
 
       if (typeof origObj === 'string' || item.rawRowData?.isRawString) {
         return finalTrans;
@@ -699,7 +769,7 @@ export function exportGameJSON(
 
     items.forEach((item) => {
       const trans = item.translatedText || item.originalText;
-      const finalTrans = appendRTLMarkers ? appendHiddenRTLMarker(trans) : trans;
+      const finalTrans = appendRTLMarkers ? appendHiddenRTLMarker(trans) : stripHiddenRTLMarker(trans);
       const tokens: string[] = item.rawRowData?.pathTokens || (item.key ? item.key.split('.') : []);
       if (tokens.length > 0) {
         setDeepValue(rootObj, tokens, finalTrans);
@@ -714,7 +784,7 @@ export function exportGameJSON(
   const dictObj: Record<string, string> = {};
   items.forEach((item) => {
     const trans = item.translatedText || item.originalText;
-    dictObj[item.key || `STRING_${item.id}`] = appendRTLMarkers ? appendHiddenRTLMarker(trans) : trans;
+    dictObj[item.key || `STRING_${item.id}`] = appendRTLMarkers ? appendHiddenRTLMarker(trans) : stripHiddenRTLMarker(trans);
   });
 
   const jsonStr = JSON.stringify(dictObj, null, 2);
@@ -723,6 +793,8 @@ export function exportGameJSON(
 
 /**
  * Rebuild and Export Game XLSX workbook preserving all original columns and formatting (Finding 07B)
+ * FIX (B15): headerless workbooks are exported WITHOUT a header row and WITHOUT consuming the
+ * first data row, exactly mirroring the parse behavior.
  */
 export async function exportGameXLSX(
   items: GameLocalizationItem[],
@@ -740,6 +812,8 @@ export async function exportGameXLSX(
   const sourceCol = mapping.sourceColumn || 'Source';
   const targetCol = mapping.targetColumn || 'Translation';
   const keyCol = mapping.keyColumn;
+  // FIX (B15): respect the detected/stored hasHeaders state
+  const hasHeaders = originalStructure?.hasHeaders === false || mapping.hasHeaders === false ? false : true;
   const originalColumns: string[] = originalStructure?.headerRow || [];
 
   const finalColumns: string[] = [];
@@ -757,18 +831,20 @@ export async function exportGameXLSX(
   }
 
   worksheet.columns = finalColumns.map((colName) => ({
-    header: colName,
+    header: hasHeaders ? colName : undefined,
     key: colName,
     width: colName === sourceCol || colName === targetCol ? 45 : 20,
   }));
 
-  const headerRow = worksheet.getRow(1);
-  headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-  headerRow.fill = {
-    type: 'pattern',
-    pattern: 'solid',
-    fgColor: { argb: 'FF4F46E5' },
-  };
+  if (hasHeaders) {
+    const headerRow = worksheet.getRow(1);
+    headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    headerRow.fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FF4F46E5' },
+    };
+  }
 
   items.forEach((item) => {
     const rowObj: Record<string, any> = item.rawRowData ? { ...item.rawRowData } : {};
@@ -777,7 +853,7 @@ export async function exportGameXLSX(
     }
     rowObj[sourceCol] = item.originalText;
     const finalTrans = item.translatedText || item.originalText;
-    rowObj[targetCol] = appendRTLMarkers ? appendHiddenRTLMarker(finalTrans) : finalTrans;
+    rowObj[targetCol] = appendRTLMarkers ? appendHiddenRTLMarker(finalTrans) : stripHiddenRTLMarker(finalTrans);
     worksheet.addRow(rowObj);
   });
 
@@ -787,6 +863,11 @@ export async function exportGameXLSX(
 
 /**
  * Rebuild and Export Game TXT preserving comments, blank lines, and original delimiters (Finding 06B)
+ * FIX (B12 usage / B11): when the original structure is provided the exact raw separator
+ * (including original spacing) is reused, so strict engine parsers see byte-identical lines.
+ * FIX (B22): TXT output no longer carries a UTF-8 BOM — strict game parsers treated it as part
+ * of the first key. (CSV keeps its BOM on purpose for Excel compatibility.)
+ * FIX (B17): when appendRTLMarkers is false, previously-added \u200F markers are stripped.
  */
 export function exportGameTXT(
   items: GameLocalizationItem[],
@@ -810,8 +891,10 @@ export function exportGameTXT(
         const item = itemsMap.get(entry.itemId);
         if (item) {
           const trans = item.translatedText || item.originalText;
-          const finalTrans = appendRTLMarkers ? appendHiddenRTLMarker(trans) : trans;
-          const delimiter = entry.delimiter ? ` ${entry.delimiter} ` : '';
+          const finalTrans = appendRTLMarkers ? appendHiddenRTLMarker(trans) : stripHiddenRTLMarker(trans);
+          // FIX (B11): reuse the exact original separator ("KEY:value" stays "KEY:value")
+          const rawSep: string = entry.rawSep ?? (item.rawRowData?.rawSep ?? '');
+          const delimiter = rawSep || (entry.delimiter ? ` ${entry.delimiter} ` : '');
           if (item.key && !item.key.startsWith('LINE_')) {
             lines.push(`${item.key}${delimiter}${finalTrans}`);
           } else {
@@ -824,8 +907,10 @@ export function exportGameTXT(
   } else {
     const lines = items.map((item) => {
       const trans = item.translatedText || item.originalText;
-      const finalTrans = appendRTLMarkers ? appendHiddenRTLMarker(trans) : trans;
-      const delimiter = item.rawRowData?.delimiter ? ` ${item.rawRowData.delimiter} ` : ' = ';
+      const finalTrans = appendRTLMarkers ? appendHiddenRTLMarker(trans) : stripHiddenRTLMarker(trans);
+      // FIX (B11): prefer the exact original separator captured at parse time
+      const rawSep: string = item.rawRowData?.rawSep || '';
+      const delimiter = rawSep || (item.rawRowData?.delimiter ? ` ${item.rawRowData.delimiter} ` : ' = ');
       if (item.key && !item.key.startsWith('LINE_')) {
         return `${item.key}${delimiter}${finalTrans}`;
       }
@@ -834,7 +919,8 @@ export function exportGameTXT(
     content = lines.join('\n');
   }
 
-  return createUtf8BomBlob(content, 'text/plain;charset=utf-8');
+  // FIX (B22): no BOM for game TXT files
+  return createUtf8Blob(content, 'text/plain;charset=utf-8');
 }
 
 /**
@@ -885,4 +971,15 @@ export function appendHiddenRTLMarker(text: string): string {
     return `${text}\u200F`;
   }
   return text;
+}
+
+/**
+ * FIX (B17): removes hidden RTL directional marks (\u200F) previously embedded in the text.
+ * Used on every game/cinema export path when the "Append RTL markers" option is OFF so the
+ * toggle truly guarantees a marker-free output file (string comparisons and search inside the
+ * game engine stay clean).
+ */
+export function stripHiddenRTLMarker(text: string): string {
+  if (!text) return text;
+  return text.replace(/\u200F/g, '');
 }

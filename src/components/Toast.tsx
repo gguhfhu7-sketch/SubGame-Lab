@@ -1,13 +1,15 @@
 import React from 'react';
 import { ToastMessage } from '../types';
 import { CheckCircle2, AlertTriangle, XCircle, Info, X } from 'lucide-react';
+import type { UILanguage } from '../lib/i18n';
 
 interface ToastProps {
   toasts: ToastMessage[];
   onDismiss: (id: string) => void;
+  uiLang?: UILanguage;
 }
 
-export const ToastContainer: React.FC<ToastProps> = ({ toasts, onDismiss }) => {
+export const ToastContainer: React.FC<ToastProps> = ({ toasts, onDismiss, uiLang = 'fa' }) => {
   if (toasts.length === 0) return null;
 
   return (
@@ -49,7 +51,8 @@ export const ToastContainer: React.FC<ToastProps> = ({ toasts, onDismiss }) => {
               type="button"
               onClick={() => onDismiss(toast.id)}
               className="p-1 rounded-lg text-white/80 hover:text-white hover:bg-white/20 transition-colors shrink-0"
-              title="بستن"
+              // FIX (L2): the dismiss title was hardcoded Persian on every UI language
+              title={uiLang === 'en' ? 'Close' : uiLang === 'ar' ? 'إغلاق' : 'بستن'}
             >
               <X className="w-4 h-4" />
             </button>

@@ -52,7 +52,12 @@ export function createDefaultSession(mode: AppMode): ModeSessionState {
   };
 }
 
-let saveTimeout: ReturnType<typeof setTimeout> | null = null;
+// FIX (B18): a SINGLE global debounce timer was shared by BOTH workspaces — switching modes
+// within the 1.2s window cancelled the previous mode's pending save and its edits were lost if
+// the browser closed in that gap. Timers are now tracked PER MODE so each workspace saves
+// independently, and pagehide/visibilitychange flushes every pending save instantly.
+const pendingSaveTimers = new Map<AppMode, ReturnType<typeof setTimeout>>();
+const pendingSaveStates = new Map<AppMode, ModeSessionState>();
 
 export async function saveSessionToDb(mode: AppMode, state: ModeSessionState): Promise<void> {
   try {
@@ -73,12 +78,36 @@ export async function saveSessionToDb(mode: AppMode, state: ModeSessionState): P
 }
 
 export function debounceSaveSession(mode: AppMode, state: ModeSessionState, delayMs = 1200): void {
-  if (saveTimeout) {
-    clearTimeout(saveTimeout);
+  // remember the LATEST state for this mode (a newer call supersedes the older one)
+  pendingSaveStates.set(mode, state);
+
+  const existingTimer = pendingSaveTimers.get(mode);
+  if (existingTimer) {
+    clearTimeout(existingTimer);
   }
-  saveTimeout = setTimeout(() => {
-    saveSessionToDb(mode, state);
+
+  const timer = setTimeout(() => {
+    pendingSaveTimers.delete(mode);
+    const latest = pendingSaveStates.get(mode);
+    if (latest) {
+      pendingSaveStates.delete(mode);
+      void saveSessionToDb(mode, latest);
+    }
   }, delayMs);
+  pendingSaveTimers.set(mode, timer);
+}
+
+/**
+ * FIX (B18): immediately persists every pending debounced save. Called on pagehide /
+ * visibilitychange so a sudden tab close can no longer swallow the last 1.2s of edits.
+ */
+export function flushPendingSessionSaves(): void {
+  pendingSaveTimers.forEach((timer) => clearTimeout(timer));
+  pendingSaveTimers.clear();
+  pendingSaveStates.forEach((state, mode) => {
+    void saveSessionToDb(mode, state);
+  });
+  pendingSaveStates.clear();
 }
 
 export async function loadSessionFromDb(mode: AppMode): Promise<ModeSessionState | null> {

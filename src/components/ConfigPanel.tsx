@@ -263,24 +263,30 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = ({
               </div>
               <div>
                 <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block">
-                  {t.aiModelSelector}
+                  {activeProvider === 'custom'
+                    ? (uiLang === 'en' ? 'AI Engine: Custom Provider (BYOK)' : 'موتور هوش مصنوعی: سرویس‌دهنده سفارشی')
+                    : t.aiModelSelector}
                 </span>
                 <span className="text-[10px] text-slate-500 dark:text-slate-400">
-                  {uiLang === 'en' ? 'Select AI engine suited for your file volume & complexity' : 'موتور هوش مصنوعی متناسب با حجم و لحن فایل را انتخاب کنید'}
+                  {activeProvider === 'custom'
+                    ? (uiLang === 'en' ? 'Translation is routed to your own configured provider & model' : 'ترجمه به سرویس‌دهنده و مدل اختصاصی شما هدایت می‌شود')
+                    : (uiLang === 'en' ? 'Select AI engine suited for your file volume & complexity' : 'موتور هوش مصنوعی متناسب با حجم و لحن فایل را انتخاب کنید')}
                 </span>
               </div>
             </div>
 
-            {/* Model Guide Info Button */}
-            <button
-              type="button"
-              onClick={() => setIsGuideOpen(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/50 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 transition-all shadow-sm active:scale-95 shrink-0"
-              title={t.modelGuideTitle}
-            >
-              <HelpCircle className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
-              <span className="hidden xs:inline sm:inline">{t.aiModelGuide}</span>
-            </button>
+            {/* Model Guide Info Button — FIX: Gemini-specific guide is hidden while Custom Provider is active */}
+            {activeProvider !== 'custom' && (
+              <button
+                type="button"
+                onClick={() => setIsGuideOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/50 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 transition-all shadow-sm active:scale-95 shrink-0"
+                title={t.modelGuideTitle}
+              >
+                <HelpCircle className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                <span className="hidden xs:inline sm:inline">{t.aiModelGuide}</span>
+              </button>
+            )}
           </div>
 
           {/* Custom Provider Active Banner */}
@@ -317,70 +323,77 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = ({
             </div>
           )}
 
-          {/* Primary Model Dropdown Select with Clear Descriptive Labels */}
-          <div className="flex flex-col gap-1.5">
-            <label className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 flex items-center justify-between">
-              <span>{uiLang === 'en' ? 'Select Gemini Model:' : 'انتخاب مدل جمینای:'}</span>
-              <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-normal">
-                {AI_MODELS.length} {uiLang === 'en' ? 'models available' : 'مدل فعال'}
-              </span>
-            </label>
-            <div className="relative">
-              <select
-                value={selectedModel}
-                onChange={(e) => setSelectedModel(e.target.value as AIModelId)}
-                className="w-full text-xs font-medium bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2.5 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all font-sans cursor-pointer shadow-xs"
-              >
-                {AI_MODELS.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.displayLabel || `${m.name} — ${m.badge}`}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          {/* Quick Model Selector Segmented Cards */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-1.5 pt-1">
-            {AI_MODELS.map((m) => {
-              const isSelected = selectedModel === m.id;
-              return (
-                <button
-                  key={m.id}
-                  type="button"
-                  onClick={() => setSelectedModel(m.id)}
-                  className={`group relative text-start p-2 rounded-xl border transition-all flex flex-col justify-between gap-1.5 overflow-hidden ${
-                    isSelected
-                      ? 'bg-white dark:bg-slate-900 border-indigo-500 dark:border-indigo-500 ring-2 ring-indigo-500/20 shadow-sm shadow-indigo-500/5'
-                      : 'bg-white/70 dark:bg-slate-900/50 border-slate-200/80 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 hover:bg-white dark:hover:bg-slate-900'
-                  }`}
+          {/* Primary Model Dropdown Select with Clear Descriptive Labels
+              FIX: the whole Gemini model list (dropdown + quick cards + insight bar) is hidden while
+              Custom Provider is active, and reappears/reactivates automatically when the user switches
+              back to Gemini (selectedModel state is preserved across the switch). */}
+          {activeProvider !== 'custom' && (
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 flex items-center justify-between">
+                <span>{uiLang === 'en' ? 'Select Gemini Model:' : 'انتخاب مدل جمینای:'}</span>
+                <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-normal">
+                  {AI_MODELS.length} {uiLang === 'en' ? 'models available' : 'مدل فعال'}
+                </span>
+              </label>
+              <div className="relative">
+                <select
+                  value={selectedModel}
+                  onChange={(e) => setSelectedModel(e.target.value as AIModelId)}
+                  className="w-full text-xs font-medium bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2.5 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all font-sans cursor-pointer shadow-xs"
                 >
-                  <div className="flex items-center gap-1.5 w-full">
-                    <div className={`p-1 rounded-lg shrink-0 ${isSelected ? 'bg-indigo-50 dark:bg-indigo-950/60' : 'bg-slate-100 dark:bg-slate-800'}`}>
-                      {getModelIcon(m.id)}
-                    </div>
-                    <span className={`text-[11px] font-bold truncate ${isSelected ? 'text-indigo-700 dark:text-indigo-300' : 'text-slate-800 dark:text-slate-200'}`}>
-                      {m.name}
-                    </span>
-                  </div>
+                  {AI_MODELS.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.displayLabel || `${m.name} — ${m.badge}`}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          )}
 
-                  <div className="flex items-center justify-between gap-1 text-[9px] w-full pt-1 border-t border-slate-100 dark:border-slate-800/80">
-                    <span className={`font-semibold px-1 py-0.2 rounded border truncate ${m.badgeColor}`}>
-                      {m.status === 'preview' ? 'Preview' : m.badge.split('/')[0].trim()}
-                    </span>
-                    {m.speed && (
-                      <span className="text-slate-500 dark:text-slate-400 font-mono shrink-0">
-                        {m.speed.split(' ')[0]}
+          {/* Quick Model Selector Segmented Cards — FIX: hidden while Custom Provider is active */}
+          {activeProvider !== 'custom' && (
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-1.5 pt-1">
+              {AI_MODELS.map((m) => {
+                const isSelected = selectedModel === m.id;
+                return (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => setSelectedModel(m.id)}
+                    className={`group relative text-start p-2 rounded-xl border transition-all flex flex-col justify-between gap-1.5 overflow-hidden ${
+                      isSelected
+                        ? 'bg-white dark:bg-slate-900 border-indigo-500 dark:border-indigo-500 ring-2 ring-indigo-500/20 shadow-sm shadow-indigo-500/5'
+                        : 'bg-white/70 dark:bg-slate-900/50 border-slate-200/80 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 hover:bg-white dark:hover:bg-slate-900'
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5 w-full">
+                      <div className={`p-1 rounded-lg shrink-0 ${isSelected ? 'bg-indigo-50 dark:bg-indigo-950/60' : 'bg-slate-100 dark:bg-slate-800'}`}>
+                        {getModelIcon(m.id)}
+                      </div>
+                      <span className={`text-[11px] font-bold truncate ${isSelected ? 'text-indigo-700 dark:text-indigo-300' : 'text-slate-800 dark:text-slate-200'}`}>
+                        {m.name}
                       </span>
-                    )}
-                  </div>
-                </button>
-              );
-            })}
-          </div>
+                    </div>
 
-          {/* Active Model Insight Bar */}
-          {(() => {
+                    <div className="flex items-center justify-between gap-1 text-[9px] w-full pt-1 border-t border-slate-100 dark:border-slate-800/80">
+                      <span className={`font-semibold px-1 py-0.2 rounded border truncate ${m.badgeColor}`}>
+                        {m.status === 'preview' ? 'Preview' : m.badge.split('/')[0].trim()}
+                      </span>
+                      {m.speed && (
+                        <span className="text-slate-500 dark:text-slate-400 font-mono shrink-0">
+                          {m.speed.split(' ')[0]}
+                        </span>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Active Model Insight Bar — FIX: hidden while Custom Provider is active */}
+          {activeProvider !== 'custom' && (() => {
             const activeM = AI_MODELS.find((m) => m.id === selectedModel) || AI_MODELS[0];
             const desc = uiLang === 'en' ? activeM.descriptionEn : uiLang === 'ar' ? activeM.descriptionAr : activeM.descriptionFa;
             return (
@@ -583,7 +596,8 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = ({
               <span>{t.customPromptLabel}</span>
             </label>
             <span className="text-[11px] text-slate-500 dark:text-slate-400">
-              {customPrompt.length} کاراکتر
+              {/* FIX (L2): hardcoded Persian label → i18n-aware tri-lingual text */}
+              {customPrompt.length} {uiLang === 'en' ? 'characters' : uiLang === 'ar' ? 'حرف' : 'کاراکتر'}
             </span>
           </div>
 
@@ -599,7 +613,8 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = ({
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 flex items-center gap-1">
               <Sparkles className="w-3 h-3 text-purple-500" />
-              الگوهای سریع:
+              {/* FIX (L2): hardcoded Persian label → i18n-aware tri-lingual text */}
+              {uiLang === 'en' ? 'Quick presets:' : uiLang === 'ar' ? 'القوالب السريعة:' : 'الگوهای سریع:'}
             </span>
             <button
               type="button"
@@ -766,8 +781,11 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = ({
                     value={batchSize || 35}
                     onChange={(e) => {
                       const val = parseInt(e.target.value, 10);
-                      if (!isNaN(val) && val > 0 && setBatchSize) {
-                        setBatchSize(Math.min(200, Math.max(1, val)));
+                      // FIX (L6): the numeric input accepted 1 while the stepper buttons enforced
+                      // a minimum of 5 (and the help text mentioned a third limit). One single
+                      // bound (5) is now applied everywhere.
+                      if (!isNaN(val) && val >= 5 && setBatchSize) {
+                        setBatchSize(Math.min(200, Math.max(5, val)));
                       }
                     }}
                     className="w-14 text-center text-xs font-mono font-bold bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-750 rounded-lg py-1 px-1 text-purple-700 dark:text-purple-300 focus:ring-1 focus:ring-purple-500 focus:outline-none"
@@ -842,31 +860,32 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = ({
             )}
 
             {/* Append Hidden RTL Markers (\u200f) Toggle */}
-            {isGameMode && (
-              <div className="flex items-start sm:items-center justify-between gap-3 p-2.5 rounded-lg bg-white/60 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800/60">
-                <div>
-                  <div className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                    <Languages className="w-3.5 h-3.5 text-indigo-500" />
-                    <span>{t.appendRTLMarkers}</span>
-                  </div>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                    {t.appendRTLMarkersDesc}
-                  </p>
+            {/* FIX (B17): previously game-only — the toggle was removed from the cinema UI while
+                the cinema exporter still appended markers by default. It is now available in BOTH
+                modes and its value is actually passed to every export function. */}
+            <div className="flex items-start sm:items-center justify-between gap-3 p-2.5 rounded-lg bg-white/60 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800/60">
+              <div>
+                <div className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                  <Languages className="w-3.5 h-3.5 text-indigo-500" />
+                  <span>{t.appendRTLMarkers}</span>
                 </div>
-
-                <button
-                  type="button"
-                  onClick={() => setAppendRTLMarkers && setAppendRTLMarkers(!appendRTLMarkers)}
-                  className={`p-1.5 rounded-lg border transition-all shrink-0 ${
-                    appendRTLMarkers
-                      ? 'bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 border-indigo-500/40'
-                      : 'bg-slate-100 dark:bg-slate-800 text-slate-400 border-slate-300 dark:border-slate-700'
-                  }`}
-                >
-                  {appendRTLMarkers ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
-                </button>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                  {t.appendRTLMarkersDesc}
+                </p>
               </div>
-            )}
+
+              <button
+                type="button"
+                onClick={() => setAppendRTLMarkers && setAppendRTLMarkers(!appendRTLMarkers)}
+                className={`p-1.5 rounded-lg border transition-all shrink-0 ${
+                  appendRTLMarkers
+                    ? 'bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 border-indigo-500/40'
+                    : 'bg-slate-100 dark:bg-slate-800 text-slate-400 border-slate-300 dark:border-slate-700'
+                }`}
+              >
+                {appendRTLMarkers ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
+              </button>
+            </div>
 
           </div>
         )}

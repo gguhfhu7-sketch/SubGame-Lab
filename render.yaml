@@ -1,0 +1,29 @@
+services:
+  # SubGame Lab — AI workspace for subtitles & game localization
+  # Deploy: Dashboard > New > Blueprint > pick this repo (or New > Web Service with these commands)
+  - type: web
+    runtime: node
+    name: subgame-lab
+    plan: free            # upgrade via dashboard: 0.5c-512mb, 1c-2g, ...
+    region: frankfurt     # closest region to Iran/Middle East; alternatives: oregon, ohio, virginia, singapore
+    buildCommand: npm ci && npm run build
+    startCommand: node dist/server.cjs
+    healthCheckPath: /api/health
+    autoDeployTrigger: commit   # redeploy on every push to the linked branch
+    envVars:
+      - key: NODE_VERSION     # pin the Node.js major version (Render default is 24)
+        value: 22.14.0
+      # --- Secrets: Render prompts for these during first Blueprint apply ---
+      - key: GEMINI_API_KEY   # server-side Gemini key (optional)
+        sync: false
+      - key: ALLOW_SERVER_KEY # "true" lets users rely on the server key
+        sync: false
+      - key: ALLOWED_ORIGIN   # comma-separated origins allowed to call the API
+        sync: false
+      - key: GEMINI_BASE_URL  # optional proxy/base URL for Gemini traffic
+        sync: false
+      - key: AI_RATE_LIMIT    # per-IP req/min cap on AI endpoints (0 disables)
+        value: 30
+    # NOTE: do not set PORT — Render injects it (default 10000) and the server
+    # already binds 0.0.0.0:$PORT. Graceful SIGTERM shutdown is built in
+    # (exits in well under Render's 30s shutdown delay).

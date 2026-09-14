@@ -158,9 +158,36 @@ export const SubtitleEditor: React.FC<SubtitleEditorProps> = ({
   }, [onSingleLineTranslate]);
 
   const handleCopyLine = useCallback((id: number, text: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedId(id);
-    setTimeout(() => setCopiedId(null), 2000);
+    // FIX (L3): clipboard.writeText rejects on insecure contexts (http) or missing permission —
+    // the promise used to go unhandled and the UI still showed "copied". We now catch the
+    // failure and fall back to a hidden-textarea document.execCommand copy.
+    const fallbackCopy = () => {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        const ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+        if (ok) {
+          setCopiedId(id);
+          setTimeout(() => setCopiedId(null), 2000);
+        }
+      } catch {
+        /* clipboard truly unavailable — stay silent instead of lying to the user */
+      }
+    };
+
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text).then(() => {
+        setCopiedId(id);
+        setTimeout(() => setCopiedId(null), 2000);
+      }).catch(fallbackCopy);
+    } else {
+      fallbackCopy();
+    }
   }, []);
 
   const handleFindReplaceSubmit = (e: React.FormEvent) => {
@@ -580,14 +607,19 @@ export const SubtitleEditor: React.FC<SubtitleEditorProps> = ({
   return (
     <>
       {/* Normal Embedded Workspace View */}
-      <div className={`w-full bg-white/95 dark:bg-slate-900/90 rounded-2xl border p-4 lg:p-6 shadow-md dark:shadow-2xl backdrop-blur-md flex flex-col gap-5 transition-all duration-300 ${
-        isGameMode
-          ? 'border-purple-500/25 dark:border-purple-500/35 shadow-purple-500/5'
-          : 'border-blue-500/25 dark:border-blue-500/35 shadow-blue-500/5'
-      }`}>
-        {renderHeaderControls()}
-        {renderRowsContent('max-h-[620px]')}
-      </div>
+      {/* FIX (L5): when the full-screen overlay is active, the underlying normal view is no longer
+          rendered — previously BOTH lists mounted simultaneously, both virtual containers attached
+          to the same ref, doubling row measurement work and memory on large files. */}
+      {!isFullscreen && (
+        <div className={`w-full bg-white/95 dark:bg-slate-900/90 rounded-2xl border p-4 lg:p-6 shadow-md dark:shadow-2xl backdrop-blur-md flex flex-col gap-5 transition-all duration-300 ${
+          isGameMode
+            ? 'border-purple-500/25 dark:border-purple-500/35 shadow-purple-500/5'
+            : 'border-blue-500/25 dark:border-blue-500/35 shadow-blue-500/5'
+        }`}>
+          {renderHeaderControls()}
+          {renderRowsContent('max-h-[620px]')}
+        </div>
+      )}
 
       {/* Full-Screen Workspace Overlay */}
       {isFullscreen && (

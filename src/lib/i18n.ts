@@ -14,6 +14,7 @@ export interface Translations {
   defaultKeyActive: string;
   downloadSubtitle: string;
   downloadDisabled: string;
+  downloadPartial: string;
   processing: string;
   uploadTitle: string;
   uploadSubtitle: string;
@@ -204,6 +205,7 @@ export const TRANSLATIONS: Record<UILanguage, Translations> = {
     defaultKeyActive: 'کلید پیش‌فرض',
     downloadSubtitle: 'دانلود فایل ترجمه',
     downloadDisabled: 'دانلود غیرفعال',
+    downloadPartial: 'خروجی از کار نیمه‌تمام',
     processing: 'در حال پردازش',
     uploadTitle: 'بارگذاری فایل زیرنویس',
     uploadSubtitle: 'پشتیبانی کامل از فرمت‌های SRT, VTT, ASS, SSA, SUB',
@@ -392,6 +394,7 @@ export const TRANSLATIONS: Record<UILanguage, Translations> = {
     defaultKeyActive: 'Default Key',
     downloadSubtitle: 'Download Translated File',
     downloadDisabled: 'Download Locked',
+    downloadPartial: 'Export partial work',
     processing: 'Processing',
     uploadTitle: 'Upload Subtitle File',
     uploadSubtitle: 'Full support for SRT, VTT, ASS, SSA, SUB formats',
@@ -580,6 +583,7 @@ export const TRANSLATIONS: Record<UILanguage, Translations> = {
     defaultKeyActive: 'المفتاح الافتراضي',
     downloadSubtitle: 'تحميل الملف المترجم',
     downloadDisabled: 'التحميل معطل',
+    downloadPartial: 'تصدير العمل غير المكتمل',
     processing: 'جاري المعالجة',
     uploadTitle: 'رفع ملف الترجمة',
     uploadSubtitle: 'دعم كامل لصيغ SRT, VTT, ASS, SSA, SUB',

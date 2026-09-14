@@ -27,12 +27,33 @@ const _dirname = typeof __dirname !== 'undefined'
   ? __dirname
   : process.cwd();
 
+// Runtime status of static frontend hosting, surfaced via /api/health for remote diagnosis.
+// FIX (WHITE-SCREEN INCIDENT, Render 2026-09-14): when the platform build never ran
+// (dist/ missing) the old code silently served the REPO ROOT, which returned the raw
+// dev index.html (references /src/main.tsx -> blank white page) AND exposed the entire
+// source tree (server.ts, package-lock.json, render.yaml...) via express.static.
+let PROD_STATIC_STATE: 'build' | 'missing' | 'dev' = 'dev';
+
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 
-// Enable CORS and parse JSON/URL-encoded bodies
+// ─── FIX (B1): protect the server's own API key & expensive endpoints ─────────────
+// 1) CORS lockdown: when ALLOWED_ORIGIN is set (e.g. "https://myapp.example.com"), only that
+//    origin is echoed back instead of the wildcard that let any website burn the server quota.
+const ALLOWED_ORIGIN = (process.env.ALLOWED_ORIGIN || '').trim();
 app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
+  const origin = req.headers.origin;
+  if (ALLOWED_ORIGIN && origin) {
+    const allowedList = ALLOWED_ORIGIN.split(',').map((o) => o.trim()).filter(Boolean);
+    if (allowedList.includes(origin)) {
+      res.header('Access-Control-Allow-Origin', origin);
+      res.header('Vary', 'Origin');
+    }
+    // Non-allowed origins get no CORS headers → browsers block the response
+  } else {
+    // Local development / unconfigured deployments keep the previous open behavior
+    res.header('Access-Control-Allow-Origin', '*');
+  }
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-gemini-api-key, x-gemini-api-keys');
   if (req.method === 'OPTIONS') {
@@ -40,6 +61,45 @@ app.use((req, res, next) => {
   }
   next();
 });
+
+// 2) Per-IP rate limiting on every AI-endpoint (token-bucket per minute).
+//    AI_RATE_LIMIT=0 disables it. Default: 30 requests/minute/IP — generous for real users,
+//    deadly for quota-abuse bots hammering the free server key.
+const AI_RATE_LIMIT = Number(process.env.AI_RATE_LIMIT ?? 30);
+const rateLimitBuckets = new Map<string, { count: number; resetAt: number }>();
+setInterval(() => {
+  const now = Date.now();
+  rateLimitBuckets.forEach((bucket, ip) => {
+    if (bucket.resetAt < now) rateLimitBuckets.delete(ip);
+  });
+}, 60_000).unref?.();
+
+function aiRateLimiter(req: express.Request, res: express.Response, next: express.NextFunction) {
+  if (!AI_RATE_LIMIT || AI_RATE_LIMIT <= 0) return next();
+  const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || req.socket.remoteAddress || 'unknown';
+  const now = Date.now();
+  let bucket = rateLimitBuckets.get(ip);
+  if (!bucket || bucket.resetAt < now) {
+    bucket = { count: 0, resetAt: now + 60_000 };
+    rateLimitBuckets.set(ip, bucket);
+  }
+  bucket.count++;
+  if (bucket.count > AI_RATE_LIMIT) {
+    const retryAfterSec = Math.max(1, Math.ceil((bucket.resetAt - now) / 1000));
+    res.header('Retry-After', String(retryAfterSec));
+    return res.status(429).json({
+      success: false,
+      error: `تعداد درخواست‌های شما بیش از حد مجاز است. لطفاً پس از ${retryAfterSec} ثانیه دوباره تلاش کنید.`,
+      errorType: 'rate_limit',
+      retryable: true,
+    });
+  }
+  return next();
+}
+
+// 3) The built-in server key may be disabled entirely for public deployments by setting
+//    ALLOW_SERVER_KEY=false — then every user MUST bring their own key (BYOK).
+const serverKeyAllowed = () => process.env.ALLOW_SERVER_KEY !== 'false' && Boolean(process.env.GEMINI_API_KEY?.trim());
 
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
@@ -53,6 +113,10 @@ function getGenAIClient(customApiKey?: string): GoogleGenAI {
   return new GoogleGenAI({
     apiKey,
     httpOptions: {
+      // FIX: GEMINI_BASE_URL allows pointing the SDK at a mock/self-hosted upstream —
+      // essential for deterministic integration tests of failover/quota/stream behavior
+      // (undefined in production = default Google endpoint, zero behavior change).
+      baseUrl: process.env.GEMINI_BASE_URL?.trim() || undefined,
       headers: {
         'User-Agent': 'aistudio-build',
       },
@@ -72,6 +136,8 @@ const TONE_PROMPTS: Record<string, string> = {
 };
 
 // Helper function to extract array of client API keys from headers or env
+// FIX (B1): the server environment key is used ONLY as an explicit last resort (no user key at
+// all) and only when ALLOW_SERVER_KEY !== 'false'. It is NEVER mixed into a user's key chain.
 function getClientKeysFromHeader(req: express.Request): string[] {
   const multiKeysHeader = req.headers['x-gemini-api-keys'] as string;
   if (multiKeysHeader) {
@@ -107,22 +173,32 @@ function getClientKeysFromHeader(req: express.Request): string[] {
     }
   }
 
-  if (process.env.GEMINI_API_KEY) {
-    return [process.env.GEMINI_API_KEY.trim()];
+  // FIX (B1): fallback to the server key only when the visitor sent NO key at all
+  if (serverKeyAllowed()) {
+    return [process.env.GEMINI_API_KEY!.trim()];
   }
 
   return [];
 }
 
 // Helper function to execute Gemini requests with multi-key rotation, intelligent model fallback, and rate-limit backoff
+// FIX (Cancellation): accepts an optional AbortSignal so a client cancel/disconnect stops ALL upstream work
 async function callGeminiWithRetryAndFallback(
   apiKeys: string[],
   generateParams: {
     contents: any;
     config?: any;
   },
-  preferredModel?: string
+  preferredModel?: string,
+  abortSignal?: AbortSignal
 ): Promise<{ response: any; modelUsed: string; isFallback: boolean }> {
+  // FIX: throw immediately if the client is already gone (no wasted API call at all)
+  if (abortSignal?.aborted) {
+    const abortErr: any = new Error('CLIENT_ABORTED: request cancelled before dispatch');
+    abortErr.isClientAbort = true;
+    throw abortErr;
+  }
+
   const rawKeys = apiKeys.length > 0 ? apiKeys : [];
   const keysToTry: string[] = [];
   rawKeys.forEach((k) => {
@@ -132,11 +208,12 @@ async function callGeminiWithRetryAndFallback(
     }
   });
 
-  if (process.env.GEMINI_API_KEY) {
-    const envKey = process.env.GEMINI_API_KEY.trim();
-    if (envKey && !keysToTry.includes(envKey)) {
-      keysToTry.push(envKey);
-    }
+  // FIX (B1): the server environment key is appended ONLY when the user sent NO keys.
+  // Previously it was ALWAYS appended, so as soon as a user's quota ran dry the traffic
+  // silently continued on the owner's paid key (cost leakage / financial DoS vector).
+  if (keysToTry.length === 0 && serverKeyAllowed()) {
+    const envKey = process.env.GEMINI_API_KEY!.trim();
+    if (envKey) keysToTry.push(envKey);
   }
 
   if (keysToTry.length === 0) {
@@ -157,9 +234,37 @@ async function callGeminiWithRetryAndFallback(
 
   let lastError: any = null;
 
+  // FIX: interruptible sleep that returns early when the client aborts
+  const sleepWithAbort = async (ms: number) => {
+    if (!abortSignal) {
+      await new Promise((resolve) => setTimeout(resolve, ms));
+      return;
+    }
+    let timer: NodeJS.Timeout | null = null;
+    const aborted = new Promise<void>((resolve) => {
+      if (abortSignal.aborted) resolve();
+      else abortSignal.addEventListener('abort', () => resolve(), { once: true });
+    });
+    const timeout = new Promise<void>((resolve) => { timer = setTimeout(resolve, ms); });
+    await Promise.race([aborted, timeout]);
+    if (timer) clearTimeout(timer);
+    if (abortSignal.aborted) {
+      const abortErr: any = new Error('CLIENT_ABORTED: cancelled during backoff');
+      abortErr.isClientAbort = true;
+      throw abortErr;
+    }
+  };
+
   for (let kIdx = 0; kIdx < keysToTry.length; kIdx++) {
     const currentKey = keysToTry[kIdx];
     if (!currentKey) continue;
+
+    // FIX: stop key rotation when client is gone
+    if (abortSignal?.aborted) {
+      const abortErr: any = new Error('CLIENT_ABORTED: cancelled before key rotation');
+      abortErr.isClientAbort = true;
+      throw abortErr;
+    }
 
     let ai: GoogleGenAI;
     try {
@@ -176,16 +281,32 @@ async function callGeminiWithRetryAndFallback(
 
       while (attempts < maxAttemptsPerModel) {
         attempts++;
+
+        // FIX: stop model/attempt rotation when client is gone
+        if (abortSignal?.aborted) {
+          const abortErr: any = new Error('CLIENT_ABORTED: cancelled before attempt');
+          abortErr.isClientAbort = true;
+          throw abortErr;
+        }
+
         try {
           const response = await ai.models.generateContent({
             model: modelName,
             contents: generateParams.contents,
-            config: generateParams.config,
+            // FIX: wire the client abort signal into the SDK so the upstream HTTP call is cancelled
+            config: { ...(generateParams.config || {}), abortSignal },
           });
           
           const isFallback = Boolean(modelName !== targetModel);
           return { response, modelUsed: modelName, isFallback };
         } catch (err: any) {
+          // FIX: client cancelled mid-call — unwind every loop immediately, no failover, no retry
+          if (abortSignal?.aborted) {
+            const abortErr: any = new Error(`CLIENT_ABORTED: cancelled during ${modelName} call`);
+            abortErr.isClientAbort = true;
+            throw abortErr;
+          }
+
           const msg = err?.message || String(err);
           const is404 = msg.includes('404') || msg.toLowerCase().includes('not found');
 
@@ -213,14 +334,20 @@ async function callGeminiWithRetryAndFallback(
           }
 
           if (isRateLimit) {
-            // 1. If we have more API keys, failover to the next key immediately for current model
+            // 1. If we have more API keys, failover to the next key immediately — skipping ALL
+            //    remaining models of this exhausted key.
             if (kIdx < keysToTry.length - 1) {
               console.warn(`[Gemini Rate Limit] Key #${kIdx + 1} exhausted quota for ${modelName}. Switching to Key #${kIdx + 2}...`);
-              break; // exit model loop to try next key in outer loop
+              // FIX (B6): `break` alone only exited the attempts loop, so the exhausted key was
+              // still retried on every remaining model. This exits the model loop too,
+              // giving the advertised instant key switch (same trick as the auth branch).
+              mIdx = models.length;
+              break;
             }
 
             // 2. If we have more models to try, failover to the next tier model immediately
-            if (mIdx < models.length - 1 && attempts >= 1) {
+            //    (rate limits are per-model per-key, so the same key may still serve another model)
+            if (mIdx < models.length - 1) {
               console.warn(`[Gemini Rate Limit] Model ${modelName} rate limited. Falling back to ${models[mIdx + 1]}...`);
               break; // exit attempts loop to try next model in inner loop
             }
@@ -235,7 +362,7 @@ async function callGeminiWithRetryAndFallback(
               }
             }
             console.warn(`[Gemini Rate Limit] Model: ${modelName}, Key: #${kIdx + 1}, Attempt: ${attempts}/${maxAttemptsPerModel}. Waiting ${Math.round(delayMs / 1000)}s...`);
-            await new Promise((resolve) => setTimeout(resolve, delayMs));
+            await sleepWithAbort(delayMs); // FIX: interruptible backoff — a cancel wakes it instantly
           } else {
             // Non-rate-limit error (e.g. 404 or bad syntax), move to next model
             break;
@@ -751,14 +878,10 @@ Do NOT return any markdown wrapper, conversational filler, or text outside the J
 }
 
 // API Endpoint: Translate batch of subtitle or game localization items
-app.post('/api/translate', async (req, res) => {
-  const requestId = 'req_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 7);
-  const jobId = req.body.jobId || ('job_' + Date.now().toString(36));
-
-  // Client Cancellation Listener (Requirement 9: Real Cancellation)
-  // CRITICAL: Must listen to res.on('close'), NOT req.on('close').
-  // In Node.js, req.on('close') fires as soon as the POST request payload finishes streaming from client,
-  // whereas res.on('close') fires when the connection terminates before res.end() is called.
+// FIX (Cancellation): single reusable helper — every long endpoint wires client disconnect to an AbortController.
+// Must listen to res.on('close'), NOT req.on('close'): req 'close' fires as soon as the POST body finishes streaming,
+// whereas res 'close' fires when the connection terminates before res.end() is called.
+function attachClientAbort(res: import('express').Response): AbortController {
   const clientAbortController = new AbortController();
   const onClientClose = () => {
     if (!res.writableEnded) {
@@ -769,6 +892,26 @@ app.post('/api/translate', async (req, res) => {
   res.on('finish', () => {
     res.off('close', onClientClose);
   });
+  return clientAbortController;
+}
+
+// FIX (L7): client-supplied jobId is sanitized before it touches logs or JSON responses —
+// free-form strings allowed log forging (fake stack traces / poisoned telemetry).
+const SAFE_JOB_ID = /^[A-Za-z0-9_-]{1,64}$/;
+function sanitizeJobId(raw: unknown): string {
+  const s = typeof raw === 'string' ? raw.trim() : '';
+  return SAFE_JOB_ID.test(s) ? s : 'job_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 6);
+}
+
+// API Endpoint: Translate batch of subtitle or game localization items
+// FIX (B1): protected by the per-IP AI rate limiter (quota-abuse protection)
+app.post('/api/translate', aiRateLimiter, async (req, res) => {
+  const requestId = 'req_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 7);
+  // FIX (L7): validated jobId — forged values are replaced by a server-generated one
+  const jobId = sanitizeJobId(req.body.jobId);
+
+  // Client Cancellation Listener (Requirement 9: Real Cancellation)
+  const clientAbortController = attachClientAbort(res);
 
   try {
     const { items, sourceLanguage, targetLanguage, tone, customPrompt, mode, model, provider, customProvider } = req.body;
@@ -882,6 +1025,7 @@ ${mode === 'game' ? 'Operational Mode: Video Game Localization Engine (Dialogue,
       const promptText = `Translate the following ${items.length} ${mode === 'game' ? 'game strings' : 'subtitle lines'} into ${targetLanguage} (Source language: ${sourceLanguage || 'Auto-detect'}):\n` +
         JSON.stringify(items, null, 2);
 
+      // FIX (Cancellation): pass the client abort signal so a cancel/disconnect stops the upstream Gemini call
       const { response, modelUsed, isFallback } = await callGeminiWithRetryAndFallback(apiKeys, {
         contents: promptText,
         config: {
@@ -931,7 +1075,7 @@ ${mode === 'game' ? 'Operational Mode: Video Game Localization Engine (Dialogue,
             required: ['translations']
           }
         }
-      }, model);
+      }, model, clientAbortController.signal);
 
       const responseText = response.text || '{}';
       let parsedData: any;
@@ -972,17 +1116,79 @@ ${mode === 'game' ? 'Operational Mode: Video Game Localization Engine (Dialogue,
       });
 
       if (missingIds.length > 0) {
-        return res.status(502).json({
-          success: false,
-          error: `مدل هوش مصنوعی ${missingIds.length} سطر را ترجمه نکرده است.`,
-          errorType: 'missing_translations',
-          retryable: true,
-          requestId,
-          jobId,
-        });
+        // FIX (B19): instead of throwing the WHOLE batch away (client retried 3× = 3× token
+        // cost and still lost everything), we run ONE targeted repair call containing ONLY the
+        // missing ids. Only if even the repair pass is incomplete do we fail the batch.
+        const missingItems = items.filter((inputItem: any) => missingIds.includes(inputItem.id));
+        let repaired = false;
+        try {
+          const repairPrompt = `The previous translation pass missed ${missingItems.length} item(s). Translate ONLY the following ${missingItems.length} ${mode === 'game' ? 'game strings' : 'subtitle lines'} into ${targetLanguage}. Return a JSON object {"translations":[{"id":number,"text":string}]} covering exactly these ids:\n` +
+            JSON.stringify(missingItems, null, 2);
+
+          const { response: repairResponse } = await callGeminiWithRetryAndFallback(apiKeys, {
+            contents: repairPrompt,
+            config: {
+              systemInstruction,
+              responseMimeType: 'application/json',
+              responseSchema: {
+                type: Type.OBJECT,
+                properties: {
+                  translations: {
+                    type: Type.ARRAY,
+                    items: {
+                      type: Type.OBJECT,
+                      properties: {
+                        id: { type: Type.INTEGER },
+                        text: { type: Type.STRING }
+                      },
+                      required: ['id', 'text']
+                    }
+                  }
+                },
+                required: ['translations']
+              }
+            }
+          }, modelUsed, clientAbortController.signal);
+
+          const repairParsed = JSON.parse(repairResponse.text || '{}');
+          const repairList = Array.isArray(repairParsed.translations) ? repairParsed.translations : [];
+          repairList.forEach((t: any) => {
+            if (t && typeof t.id === 'number' && !translationMap.has(t.id)) {
+              translationMap.set(t.id, String(t.text ?? ''));
+            }
+          });
+
+          const stillMissing = missingIds.filter((id) => !translationMap.has(id));
+          if (stillMissing.length === 0) {
+            repaired = true;
+            console.warn(`[Translate] ${requestId}: ${missingIds.length} missing line(s) recovered via targeted repair pass.`);
+          }
+        } catch (repairErr: any) {
+          if (repairErr?.isClientAbort || repairErr?.message?.startsWith('CLIENT_ABORTED')) throw repairErr;
+          console.warn(`[Translate] ${requestId}: repair pass failed:`, repairErr?.message || repairErr);
+        }
+
+        if (!repaired) {
+          const finalMissing = items.filter((inputItem: any) => !translationMap.has(inputItem.id)).map((i: any) => i.id);
+          return res.status(502).json({
+            success: false,
+            error: `مدل هوش مصنوعی ${finalMissing.length} سطر را ترجمه نکرده است.`,
+            errorType: 'missing_translations',
+            retryable: true,
+            missingIds: finalMissing,
+            requestId,
+            jobId,
+          });
+        }
       }
 
-      parsedData.translations = verifiedTranslations;
+      // FIX (B19 follow-up): always rebuild from translationMap so entries recovered by the
+      // targeted repair pass (or future salvage paths) are included in the final payload.
+      const finalTranslations = items.map((inputItem: any) => ({
+        id: inputItem.id,
+        text: translationMap.has(inputItem.id) ? translationMap.get(inputItem.id)! : '',
+      }));
+      parsedData.translations = finalTranslations;
       parsedData.success = true;
       parsedData.requestId = requestId;
       parsedData.jobId = jobId;
@@ -990,8 +1196,26 @@ ${mode === 'game' ? 'Operational Mode: Video Game Localization Engine (Dialogue,
       return res.json(parsedData);
     }
   } catch (err: unknown) {
+    // FIX (Cancellation): if the abort came from the client, the socket is already dead — log quietly, do not write
+    if ((err as any)?.isClientAbort || (err instanceof Error && err.message?.startsWith('CLIENT_ABORTED'))) {
+      console.log(`[Cancel] ${requestId} client disconnected — upstream work stopped, no further API calls.`);
+      return;
+    }
     const message = err instanceof Error ? err.message : 'Unknown server error during translation';
     console.error('Translation error:', err);
+
+    // FIX (B1 follow-up): a missing-key misconfiguration is a CLIENT error (4xx), not a server
+    // crash (500) — the UI can react by opening the key modal instead of retrying.
+    if (message.includes('کلید API جمینای تنظیم نشده')) {
+      return res.status(400).json({
+        success: false,
+        error: message,
+        errorType: 'invalid_config',
+        retryable: false,
+        requestId,
+        jobId,
+      });
+    }
 
     const isRateLimit = message.includes('429') || message.toLowerCase().includes('quota') || message.toLowerCase().includes('resource_exhausted');
     const isAuthError = message.includes('401') || message.includes('403') || message.toLowerCase().includes('api_key') || message.toLowerCase().includes('unauthorized');
@@ -1031,7 +1255,8 @@ ${mode === 'game' ? 'Operational Mode: Video Game Localization Engine (Dialogue,
 });
 
 // API Endpoint: Live Real-Time Streaming Translation (Server-Sent Events)
-app.post('/api/translate-stream', async (req, res) => {
+// FIX (B1): protected by the per-IP AI rate limiter (quota-abuse protection)
+app.post('/api/translate-stream', aiRateLimiter, async (req, res) => {
   // Set SSE streaming headers
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -1039,8 +1264,20 @@ app.post('/api/translate-stream', async (req, res) => {
   res.setHeader('X-Accel-Buffering', 'no');
   res.flushHeaders?.();
 
+  // FIX (Cancellation): detect client cancel/refresh/disconnect — previously this endpoint had NO
+  // disconnect handling at all, so the Gemini stream kept generating after the user cancelled.
+  const clientAbortController = attachClientAbort(res);
+  const isClientGone = () => clientAbortController.signal.aborted;
+
   const sendEvent = (event: string, data: any) => {
-    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    // FIX: never write to a dead socket (prevents buffered writes / potential stream errors)
+    if (isClientGone()) return false;
+    try {
+      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      return true;
+    } catch {
+      return false;
+    }
   };
 
   try {
@@ -1061,11 +1298,10 @@ app.post('/api/translate-stream', async (req, res) => {
       }
     });
 
-    if (process.env.GEMINI_API_KEY) {
-      const envKey = process.env.GEMINI_API_KEY.trim();
-      if (envKey && !keysToTry.includes(envKey)) {
-        keysToTry.push(envKey);
-      }
+    // FIX (B1): server key joins the chain ONLY when the user sent no key at all
+    if (keysToTry.length === 0 && serverKeyAllowed()) {
+      const envKey = process.env.GEMINI_API_KEY!.trim();
+      if (envKey) keysToTry.push(envKey);
     }
 
     if (keysToTry.length === 0) {
@@ -1117,8 +1353,11 @@ TEXT: لطفاً مأموریت جدید را آغاز کنید.
 
     let streamSuccess = false;
     let lastError: any = null;
+    let didLastKeyBackoff = false; // FIX (B21): bounded single backoff on the last key
 
     for (let kIdx = 0; kIdx < keysToTry.length; kIdx++) {
+      // FIX: stop key failover when the client is gone
+      if (isClientGone()) { console.log('[Cancel] translate-stream: client gone — key rotation stopped'); return res.end(); }
       if (streamSuccess) break;
       const currentKey = keysToTry[kIdx];
       let ai: GoogleGenAI;
@@ -1130,12 +1369,16 @@ TEXT: لطفاً مأموریت جدید را آغاز کنید.
       }
 
       for (let mIdx = 0; mIdx < models.length; mIdx++) {
+        // FIX: stop model failover when the client is gone
+        if (isClientGone()) { console.log('[Cancel] translate-stream: client gone — model rotation stopped'); return res.end(); }
         if (streamSuccess) break;
         const modelName = models[mIdx];
 
         try {
           sendEvent('status', { status: 'streaming_started', model: modelName, keyIndex: kIdx + 1 });
 
+          // FIX (Cancellation): wire the abort signal into the SDK — the upstream Gemini stream is
+          // cancelled as soon as the client cancels/refreshes/disconnects
           const responseStream = await ai.models.generateContentStream({
             model: modelName,
             contents: promptText,
@@ -1148,20 +1391,29 @@ TEXT: لطفاً مأموریت جدید را آغاز کنید.
                 { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
                 { category: HarmCategory.HARM_CATEGORY_CIVIC_INTEGRITY, threshold: HarmBlockThreshold.BLOCK_NONE },
               ],
+              abortSignal: clientAbortController.signal,
             },
           });
 
           let accumulatedBuffer = '';
 
           for await (const chunk of responseStream) {
+            // FIX (Cancellation): stop consuming the Gemini stream the moment the client is gone
+            if (isClientGone()) {
+              console.log('[Cancel] translate-stream: client gone — Gemini stream aborted mid-generation');
+              try { await responseStream.return?.(undefined as any); } catch {}
+              return res.end();
+            }
             const chunkText = chunk.text || '';
             if (!chunkText) continue;
 
             accumulatedBuffer += chunkText;
             sendEvent('chunk', { rawChunk: chunkText });
 
-            // Progressive parsing of completed "ID: ... TEXT: ... ---" blocks
-            const blockSeparatorRegex = /---\s*/g;
+            // FIX (B5): the "---" separator is only recognized as a STANDALONE line.
+            // Previously /---\s*/g matched dashes INSIDE dialogue text, silently cutting the
+            // rest of the subtitle (e.g. "آ---ب" or a dialogue containing an em-dash line).
+            const blockSeparatorRegex = /(^|\n)[\t ]*---+[\t ]*(?:\n|$)/g;
             let match;
             let lastIndex = 0;
 
@@ -1196,7 +1448,9 @@ TEXT: لطفاً مأموریت جدید را آغاز کنید.
             const textMatch = accumulatedBuffer.match(/TEXT:\s*([\s\S]*)/i);
             if (idMatch && textMatch) {
               const parsedId = parseInt(idMatch[1], 10);
-              const parsedText = textMatch[1].replace(/---.*$/, '').trim();
+              // FIX (B5): strip only a trailing STANDALONE separator line — in-text "---" is
+              // legitimate dialogue content and must survive.
+              const parsedText = textMatch[1].replace(/(^|\n)[\t ]*---+[\t ]*$/, '').trim();
               sendEvent('line_translated', {
                 id: parsedId,
                 text: parsedText,
@@ -1209,6 +1463,11 @@ TEXT: لطفاً مأموریت جدید را آغاز کنید.
           streamSuccess = true;
           return res.end();
         } catch (streamErr: any) {
+          // FIX (Cancellation): client disconnect mid-stream is not an error — stop everything quietly
+          if (isClientGone()) {
+            console.log('[Cancel] translate-stream: client gone — stream aborted (no failover, no retry)');
+            return res.end();
+          }
           const msg = streamErr?.message || String(streamErr);
           lastError = streamErr;
           console.warn(`[Gemini Stream Error] Key #${kIdx + 1}, Model ${modelName}:`, msg);
@@ -1217,6 +1476,34 @@ TEXT: لطفاً مأموریت جدید را آغاز کنید.
           if (isRateLimit && kIdx < keysToTry.length - 1) {
             sendEvent('status', { status: 'key_failover', nextKeyIndex: kIdx + 2 });
             break; // Try next key
+          }
+
+          // FIX (B21): rate limit on the LAST key used to fail instantly (unlike the non-stream
+          // endpoint there was no backoff). We now wait once for the provider's requested
+          // duration (capped) and re-try the same model before giving up.
+          if (isRateLimit && !didLastKeyBackoff) {
+            didLastKeyBackoff = true;
+            let delayMs = 4000;
+            const retryMatch = msg.match(/retry in ([0-9.]+)s/i);
+            if (retryMatch?.[1]) {
+              const parsedSec = parseFloat(retryMatch[1]);
+              if (!isNaN(parsedSec) && parsedSec > 0) delayMs = Math.min(Math.ceil(parsedSec * 1000) + 1000, 20000);
+            }
+            console.warn(`[Gemini Stream] Last key rate limited — backing off ${Math.round(delayMs / 1000)}s once, then retrying...`);
+            sendEvent('status', { status: 'rate_limit_backoff', retryAfterMs: delayMs });
+            const abortedDuringBackoff = await new Promise<boolean>((resolve) => {
+              const timer = setTimeout(() => resolve(false), delayMs);
+              const onAbort = () => resolve(true);
+              if (clientAbortController.signal.aborted) { clearTimeout(timer); resolve(true); return; }
+              clientAbortController.signal.addEventListener('abort', onAbort, { once: true });
+              setTimeout(() => clientAbortController.signal.removeEventListener('abort', onAbort), delayMs + 10);
+            });
+            if (abortedDuringBackoff || isClientGone()) {
+              console.log('[Cancel] translate-stream: client gone during last-key backoff');
+              return res.end();
+            }
+            mIdx--; // retry the SAME model after the wait (bounded: happens once per request)
+            continue;
           }
         }
       }
@@ -1228,6 +1515,11 @@ TEXT: لطفاً مأموریت جدید را آغاز کنید.
       return res.end();
     }
   } catch (err: unknown) {
+    // FIX (Cancellation): quiet exit on client disconnect
+    if ((err as any)?.isClientAbort || (err instanceof Error && err.message?.startsWith('CLIENT_ABORTED')) || clientAbortController.signal.aborted) {
+      console.log('[Cancel] translate-stream: client disconnected — all upstream work stopped.');
+      return res.end();
+    }
     const message = err instanceof Error ? err.message : 'Streaming endpoint failure';
     console.error('Streaming translation error:', err);
     sendEvent('error', { error: message });
@@ -1236,7 +1528,11 @@ TEXT: لطفاً مأموریت جدید را آغاز کنید.
 });
 
 // API Endpoint: Post-translation quality audit & verification pass (REQ_1)
-app.post('/api/verify-translation', async (req, res) => {
+// FIX (B1): protected by the per-IP AI rate limiter
+app.post('/api/verify-translation', aiRateLimiter, async (req, res) => {
+  // FIX (Cancellation): previously this endpoint had NO disconnect handling — a 400-line file meant
+  // up to 10 sequential provider calls continued even after the user closed/cancelled.
+  const clientAbortController = attachClientAbort(res);
   try {
     const { items, targetLanguage, tone, customPrompt, mode, provider, customProvider, model } = req.body;
 
@@ -1279,12 +1575,21 @@ AUDIT RULES:
       const targetUrl = buildChatCompletionsUrl(customProvider.baseUrl);
 
       for (let i = 0; i < items.length; i += VERIFY_CHUNK_SIZE) {
+        // FIX (Cancellation): stop the chunk loop the moment the client is gone
+        if (clientAbortController.signal.aborted) {
+          console.log('[Cancel] verify-translation: client gone — remaining audit chunks skipped');
+          return res.end();
+        }
         const chunk = items.slice(i, i + VERIFY_CHUNK_SIZE);
         const promptText = `Audit, verify and refine these ${chunk.length} translated lines into ${targetLanguage}:\n` +
           JSON.stringify(chunk.map((it: any) => ({ id: it.id, originalText: it.originalText, translatedText: it.translatedText })), null, 2);
 
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), 45000);
+        // FIX (Cancellation): link the client signal into the per-chunk timeout controller so a
+        // client cancel aborts the in-flight provider fetch too
+        const onClientAbort = () => controller.abort();
+        clientAbortController.signal.addEventListener('abort', onClientAbort, { once: true });
         try {
           const resp = await fetch(targetUrl, {
             method: 'POST',
@@ -1321,8 +1626,11 @@ AUDIT RULES:
           });
         } catch (cErr) {
           clearTimeout(timer);
+          clientAbortController.signal.removeEventListener('abort', onClientAbort);
           throw cErr;
         }
+        clearTimeout(timer);
+        clientAbortController.signal.removeEventListener('abort', onClientAbort);
       }
       modelUsedResult = customProvider.model.trim();
     } else {
@@ -1330,6 +1638,11 @@ AUDIT RULES:
       const apiKeys = getClientKeysFromHeader(req);
 
       for (let i = 0; i < items.length; i += VERIFY_CHUNK_SIZE) {
+        // FIX (Cancellation): stop the chunk loop the moment the client is gone
+        if (clientAbortController.signal.aborted) {
+          console.log('[Cancel] verify-translation: client gone — remaining audit chunks skipped');
+          return res.end();
+        }
         const chunk = items.slice(i, i + VERIFY_CHUNK_SIZE);
         const promptText = `Audit, verify and refine these ${chunk.length} translated lines into ${targetLanguage}:\n` +
           JSON.stringify(
@@ -1365,7 +1678,7 @@ AUDIT RULES:
               required: ['reviewedItems'],
             },
           },
-        }, model);
+        }, model, clientAbortController.signal); // FIX (Cancellation): abort-aware Gemini call
 
         modelUsedResult = modelUsed;
         const parsedData = JSON.parse(response.text || '{}');
@@ -1402,6 +1715,11 @@ AUDIT RULES:
       modelUsed: modelUsedResult,
     });
   } catch (err: unknown) {
+    // FIX (Cancellation): quiet exit when the abort was caused by the client itself
+    if ((err as any)?.isClientAbort || (err instanceof Error && err.message?.startsWith('CLIENT_ABORTED')) || clientAbortController.signal.aborted) {
+      console.log('[Cancel] verify-translation: client disconnected — audit stopped, no further API calls.');
+      return;
+    }
     const message = err instanceof Error ? err.message : 'Error during translation quality audit.';
     console.error('Verify translation error:', err);
     return res.status(500).json({ error: message });
@@ -1409,7 +1727,10 @@ AUDIT RULES:
 });
 
 // API Endpoint: Detect source language of text sample
-app.post('/api/detect-language', async (req, res) => {
+// FIX (B1): protected by the per-IP AI rate limiter
+app.post('/api/detect-language', aiRateLimiter, async (req, res) => {
+  // FIX (Cancellation): abort-aware — stops the provider call if the client disconnects
+  const clientAbortController = attachClientAbort(res);
   try {
     const rawText = req.body.sampleText || req.body.text;
     if (!rawText || typeof rawText !== 'string' || !rawText.trim()) {
@@ -1431,19 +1752,27 @@ app.post('/api/detect-language', async (req, res) => {
           required: ['language', 'languageFa']
         }
       }
-    });
+    }, undefined, clientAbortController.signal); // FIX (Cancellation): abort-aware
 
     const parsed = JSON.parse(response.text || '{}');
     parsed.detectedLanguage = parsed.languageFa || parsed.language;
     return res.json(parsed);
   } catch (err: unknown) {
+    // FIX (Cancellation): quiet exit when the client is gone
+    if ((err as any)?.isClientAbort || (err instanceof Error && err.message?.startsWith('CLIENT_ABORTED')) || clientAbortController.signal.aborted) {
+      console.log('[Cancel] detect-language: client disconnected — upstream call stopped.');
+      return;
+    }
     const message = err instanceof Error ? err.message : 'خطا در تشخیص زبان';
     return res.status(500).json({ error: message });
   }
 });
 
 // API Endpoint: Transcribe audio to SRT subtitles
-app.post('/api/transcribe-audio', async (req, res) => {
+// FIX (B1): protected by the per-IP AI rate limiter
+app.post('/api/transcribe-audio', aiRateLimiter, async (req, res) => {
+  // FIX (Cancellation): abort-aware — transcription of long audio is expensive; stop when client leaves
+  const clientAbortController = attachClientAbort(res);
   try {
     const { audioBase64, mimeType, targetLanguage, highAccuracyMode } = req.body;
 
@@ -1494,11 +1823,16 @@ CRITICAL INSTRUCTIONS:
           required: ['srtText'],
         },
       },
-    }, DEFAULT_TRANSCRIPTION_MODEL_ID);
+    }, DEFAULT_TRANSCRIPTION_MODEL_ID, clientAbortController.signal); // FIX (Cancellation): abort-aware
 
     const parsedData = JSON.parse(response.text || '{}');
     return res.json(parsedData);
   } catch (err: unknown) {
+    // FIX (Cancellation): quiet exit when the client is gone
+    if ((err as any)?.isClientAbort || (err instanceof Error && err.message?.startsWith('CLIENT_ABORTED')) || clientAbortController.signal.aborted) {
+      console.log('[Cancel] transcribe-audio: client disconnected — transcription stopped.');
+      return;
+    }
     const message = err instanceof Error ? err.message : 'Error transcribing audio';
     console.error('Audio transcription error:', err);
     return res.status(500).json({ error: message });
@@ -1506,29 +1840,66 @@ CRITICAL INSTRUCTIONS:
 });
 
 // Helper to parse and categorize Gemini API errors into user-friendly diagnostic messages
+// FIX (B20): classification is now anchored on the HTTP status / structured Gemini error codes
+// FIRST and only falls back to text matching. Previously the loose substring "invalid" mapped
+// request-content errors like "Invalid JSON payload" to "your API key is broken", and "limit"
+// mapped content-length errors to "quota exhausted" — sending users with perfectly healthy
+// keys on a wild key-swapping chase.
 function parseGeminiDiagnosticError(err: any): string {
   if (!err) return 'ارتباط برقرار نشد: خطای نامشخص در سرویس هوش مصنوعی.';
   const msg = typeof err === 'string' ? err : err.message || String(err);
   const lowerMsg = msg.toLowerCase();
 
-  if (
-    lowerMsg.includes('429') ||
-    lowerMsg.includes('quota') ||
+  // 1) Structured sources first: err.status / err.code / Gemini error.details reasons
+  const structuredStatus: number | undefined =
+    (typeof err?.status === 'number' && err.status) ||
+    (typeof err?.code === 'number' && err.code) ||
+    (typeof err?.response?.status === 'number' && err.response.status) ||
+    undefined;
+  const structuredReasons: string[] = Array.isArray(err?.details)
+    ? err.details.map((d: any) => String(d?.reason || d?.['@type'] || '').toLowerCase()).filter(Boolean)
+    : Array.isArray(err?.error?.details)
+      ? err.error.details.map((d: any) => String(d?.reason || d?.['@type'] || '').toLowerCase()).filter(Boolean)
+      : [];
+
+  // 2) HTTP-status anchoring (most reliable signal when present)
+  const httpStatusMatch = lowerMsg.match(/\b(400|401|403|404|429|500|503)\b/);
+  const httpStatus = structuredStatus ?? (httpStatusMatch ? parseInt(httpStatusMatch[1], 10) : undefined);
+
+  const isRateLimit =
+    httpStatus === 429 ||
+    structuredReasons.some((r) => r.includes('resource_exhausted') || r.includes('rate_limit')) ||
     lowerMsg.includes('resource_exhausted') ||
-    lowerMsg.includes('limit')
-  ) {
+    lowerMsg.includes('quota exceeded') ||
+    lowerMsg.includes('rate limit');
+
+  const isAuthError =
+    httpStatus === 401 ||
+    httpStatus === 403 ||
+    structuredReasons.some((r) => r.includes('api_key_invalid') || r.includes('permission_denied') || r.includes('unauthorized')) ||
+    lowerMsg.includes('api key not valid') ||
+    lowerMsg.includes('api_key_invalid') ||
+    lowerMsg.includes('unauthorized') ||
+    lowerMsg.includes('permission denied');
+
+  const isBadRequest =
+    httpStatus === 400 ||
+    structuredReasons.some((r) => r.includes('invalid_argument') || r.includes('bad_request')) ||
+    lowerMsg.includes('invalid json payload') ||
+    lowerMsg.includes('invalid value at') ||
+    lowerMsg.includes('invalid_argument');
+
+  if (isRateLimit) {
     return 'محدودیت تعداد درخواست (Quota/Rate Limit): سهمیه مجاز این کلید به پایان رسیده است یا باید چند لحظه صبر کنید.';
   }
 
-  if (
-    lowerMsg.includes('401') ||
-    lowerMsg.includes('403') ||
-    lowerMsg.includes('api_key') ||
-    lowerMsg.includes('unauthorized') ||
-    lowerMsg.includes('invalid') ||
-    lowerMsg.includes('permission_denied')
-  ) {
+  if (isAuthError) {
     return 'کلید API خرابه یا نامعتبر است: کلید وارد شده اشتباه است، یا دسترسی آن از سوی گوگل مسدود گردیده.';
+  }
+
+  // FIX (B20): request-content errors are reported as such — NOT as a broken key
+  if (isBadRequest) {
+    return 'درخواست ارسالی نامعتبر است (خطای محتوا): متن یا فرمت داده‌های ورودی برای مدل قابل پردازش نیست. کلید شما سالم است.';
   }
 
   if (
@@ -1545,7 +1916,12 @@ function parseGeminiDiagnosticError(err: any): string {
 }
 
 // Helper to perform a fast, direct test on a single Gemini API key without retry delays
-async function testSingleGeminiKey(keyStr: string): Promise<{ success: boolean; error?: string }> {
+// FIX (B20): the key is now validated with a FREE ListModels call (models.list) instead of
+// burning tokens on a hardcoded generateContent test. A 404 on the model list (or unknown
+// model names after a Google rename) no longer brands a healthy key as "failed" — the key is
+// reported as healthy-with-unknown-models and a live generateContent probe runs only as a
+// last resort.
+async function testSingleGeminiKey(keyStr: string): Promise<{ success: boolean; error?: string; healthyWithUnknownModels?: boolean }> {
   const cleanKey = String(keyStr || '').trim();
   if (!cleanKey) {
     return { success: false, error: 'کلید API خالی است.' };
@@ -1558,6 +1934,38 @@ async function testSingleGeminiKey(keyStr: string): Promise<{ success: boolean; 
     return { success: false, error: parseGeminiDiagnosticError(err) };
   }
 
+  // Attempt 1: free authenticated metadata call — no token cost at all
+  try {
+    const anyAi: any = ai;
+    if (typeof anyAi?.models?.list === 'function') {
+      const pager = await anyAi.models.list({ config: { pageSize: 5 } });
+      // Touching the iterator once proves authentication; we do not need the model names
+      for (const _m of pager as any) { break; }
+      return { success: true };
+    }
+  } catch (listErr: any) {
+    const listMsg = listErr?.message || String(listErr);
+    const lowerListMsg = listMsg.toLowerCase();
+
+    // 404 / NOT_FOUND on models.list still proves the KEY authenticated (google returns 401/403
+    // for bad keys, not 404) — the endpoint shape may just have changed.
+    const isAuthFailure =
+      lowerListMsg.includes('401') || lowerListMsg.includes('403') ||
+      lowerListMsg.includes('api key not valid') || lowerListMsg.includes('permission denied');
+    if (isAuthFailure) {
+      return { success: false, error: parseGeminiDiagnosticError(listErr) };
+    }
+    if (lowerListMsg.includes('404') || lowerListMsg.includes('not found')) {
+      return { success: true, healthyWithUnknownModels: true };
+    }
+    // Rate-limited keys are still VALID keys
+    if (lowerListMsg.includes('429') || lowerListMsg.includes('quota') || lowerListMsg.includes('resource_exhausted')) {
+      return { success: true };
+    }
+    // fall through to the generateContent probe below
+  }
+
+  // Attempt 2 (fallback): tiny live probe across the known model chain
   const modelsToTest = ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.1-flash-lite'];
   let lastErr: any = null;
 
@@ -1571,8 +1979,13 @@ async function testSingleGeminiKey(keyStr: string): Promise<{ success: boolean; 
     } catch (err: any) {
       lastErr = err;
       const msg = err?.message || String(err);
-      const is404 = msg.includes('404') || msg.toLowerCase().includes('not found');
-      if (is404) continue; // Try fallback model if 404
+      const lowerMsg = msg.toLowerCase();
+      const is404 = msg.includes('404') || lowerMsg.includes('not found');
+      if (is404) continue; // Try fallback model if 404 — the key itself may still be fine
+      // FIX (B20): a 404 on ALL models means healthy-key-unknown-models, not a bad key
+      if (modelName === modelsToTest[modelsToTest.length - 1] && is404) {
+        return { success: true, healthyWithUnknownModels: true };
+      }
       break; // For rate limit, auth errors, etc., stop immediately for diagnostic speed
     }
   }
@@ -1640,46 +2053,128 @@ app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
     hasServerKey,
+    static: PROD_STATIC_STATE, // 'build' = serving dist/, 'missing' = build output absent, 'dev' = vite middleware
     time: new Date().toISOString()
   });
 });
 
-// Helper to reliably locate the dist directory with index.html
-function locateDistDirectory(): string {
+// Helper to reliably locate the BUILT frontend: a dist directory whose index.html is a
+// production build (loads hashed bundles from /assets/), not the dev source index.html.
+// FIX (WHITE-SCREEN + SOURCE LEAK):
+//  - The repo root (process.cwd()) is NO LONGER an acceptable candidate. Serving it
+//    statically leaks server.ts / package-lock.json / deploy configs and yields a blank
+//    page, because /src/main.tsx is only executable under the Vite dev server.
+//  - A candidate's index.html must reference /assets/ (vite build output marker); if none
+//    qualifies we return null and startServer() serves a self-explanatory 503 guide page
+//    instead of pretending everything is fine.
+function locateDistDirectory(): string | null {
   const currentDir = typeof __dirname !== 'undefined' ? __dirname : process.cwd();
   const candidates = [
-    currentDir, // If server.cjs is in dist/, currentDir already contains index.html
+    currentDir, // canonical layout: dist/server.cjs + dist/index.html + dist/assets/
     path.join(process.cwd(), 'dist'),
     path.join(currentDir, 'dist'),
     path.join(currentDir, '..', 'dist'),
-    process.cwd(),
+    // SECURITY: process.cwd() (repo root) deliberately removed as a candidate.
   ];
 
   for (const candidate of candidates) {
-    if (fs.existsSync(path.join(candidate, 'index.html'))) {
-      return candidate;
+    const indexPath = path.join(candidate, 'index.html');
+    if (!fs.existsSync(indexPath)) continue;
+    try {
+      const html = fs.readFileSync(indexPath, 'utf8');
+      // Built index.html -> <script src="/assets/index-XXXX.js">; dev source -> /src/main.tsx
+      if (html.includes('/assets/') && !html.includes('/src/main.tsx')) {
+        return candidate;
+      }
+    } catch {
+      /* unreadable index.html — keep searching */
     }
   }
 
-  return path.join(process.cwd(), 'dist');
+  return null;
+}
+
+// Bilingual (fa/en) diagnostic page returned instead of a blank screen / leaked sources
+// when the production build output (dist/index.html) is missing on the host.
+function buildMissingPage(distHint: string): string {
+  return `<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>SubGame Lab — Build missing / بیلد یافت نشد</title>
+<style>
+  body{font-family:system-ui,Vazirmatn,Tahoma,sans-serif;background:#020617;color:#e2e8f0;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:24px}
+  .card{max-width:760px;background:#0f172a;border:1px solid #1e293b;border-radius:16px;padding:32px;line-height:1.9}
+  h1{font-size:20px;margin:0 0 12px;color:#f87171}
+  code{background:#1e293b;border-radius:6px;padding:2px 8px;font-size:13px;color:#a5b4fc;direction:ltr;display:inline-block}
+  pre{background:#1e293b;border-radius:8px;padding:12px 16px;direction:ltr;text-align:left;overflow-x:auto;color:#a5b4fc;font-size:13px;margin:8px 0}
+  .en{direction:ltr;text-align:left;border-top:1px solid #1e293b;margin-top:20px;padding-top:16px;color:#94a3b8;font-size:14px}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>خروجی بیلد فرانت‌اند پیدا نشد</h1>
+  <p>سرور اجرا است اما پوشه‌ی <code>dist</code> (نتیجه‌ی <code>npm run build</code>) روی سرور موجود نیست (${distHint}). در پنل پلتفرم استقرار این مقادیر را تنظیم و دوباره Deploy کنید:</p>
+  <pre>Build Command:  npm ci &amp;&amp; npm run build
+Start Command:  node dist/server.cjs
+Health Check:   /api/health</pre>
+  <p>اگر از Blueprint استفاده می‌کنید، فایل <code>render.yaml</code> همین تنظیمات را به‌صورت آماده دارد.</p>
+  <div class="en"><strong>Frontend build not found.</strong> The API (<code>/api/*</code>) is healthy, but the built frontend (<code>dist/index.html</code>, produced by <code>npm run build</code>) is missing on the server (${distHint}). Set the platform <em>Build Command</em> to <code>npm ci &amp;&amp; npm run build</code> and the <em>Start Command</em> to <code>node dist/server.cjs</code>, then redeploy. For source safety the server no longer serves the repository root.</div>
+</div>
+</body>
+</html>`;
 }
 
 // Setup Vite development server or serve static assets in production
 async function startServer() {
   const isCjsBundle = typeof __filename !== 'undefined' && typeof __filename === 'string' && __filename.endsWith('.cjs');
   const isProduction = process.env.NODE_ENV === 'production' || isCjsBundle;
+  let viteServer: Awaited<ReturnType<typeof createViteServer>> | null = null;
 
   if (!isProduction) {
     console.log('[Server] Starting in DEVELOPMENT mode with Vite middleware...');
-    const vite = await createViteServer({
+    viteServer = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
     });
-    app.use(vite.middlewares);
+    app.use(viteServer.middlewares);
   } else {
     const distDir = locateDistDirectory();
-    console.log(`[Server] Starting in PRODUCTION mode. Serving assets from: ${distDir}`);
-    app.use(express.static(distDir));
+
+    if (distDir) {
+      PROD_STATIC_STATE = 'build';
+      console.log(`[Server] Starting in PRODUCTION mode. Serving assets from: ${distDir}`);
+
+      // Defense-in-depth: never publish the server bundle or sourcemaps from dist/
+      // (they reveal server internals; the browser never needs them at runtime).
+      app.use((req, res, next) => {
+        if (req.path.endsWith('.map') || req.path.includes('server.cjs')) {
+          return res.status(404).json({ error: 'Not found' });
+        }
+        next();
+      });
+
+      app.use(express.static(distDir));
+    } else {
+      PROD_STATIC_STATE = 'missing';
+      // BUILD MISSING (the actual root cause of the Render white-screen incident):
+      // never fall back to serving the repo root — that leaked the whole source tree
+      // and produced a blank page. Serve an actionable bilingual guide page instead,
+      // while keeping /api/* fully functional so platform healthchecks still pass.
+      console.error(
+        '\n[Server] ==========================================================\n' +
+        '[Server]  ⚠️  Frontend build NOT found (dist/index.html).\n' +
+        '[Server]  Platform Build Command must be: npm ci && npm run build\n' +
+        '[Server]  Platform Start Command must be: node dist/server.cjs\n' +
+        '[Server]  Non-API routes will return a 503 guide page until then.\n' +
+        '[Server] ==========================================================\n'
+      );
+      app.use((req, res, next) => {
+        if (req.path.startsWith('/api/')) return next();
+        res.status(503).type('html').send(buildMissingPage('hint: run "npm run build" first'));
+      });
+    }
 
     // SPA fallback: Return index.html for non-API routes
     app.get('*', (req, res) => {
@@ -1687,18 +2182,71 @@ async function startServer() {
         return res.status(404).json({ error: 'Endpoint not found' });
       }
 
+      if (!distDir) {
+        return res.status(503).type('html').send(buildMissingPage('hint: run "npm run build" first'));
+      }
+
       const indexPath = path.join(distDir, 'index.html');
       if (fs.existsSync(indexPath)) {
         res.sendFile(indexPath);
       } else {
-        res.status(500).send(`Application build files (index.html) not found in: ${distDir}. Please ensure "npm run build" has finished.`);
+        res.status(503).type('html').send(buildMissingPage(`expected at: ${indexPath}`));
       }
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Server listening on http://0.0.0.0:${PORT} (PID: ${process.pid})`);
+  // FIX (DEPLOY): keep a reference to the raw http.Server so platform lifecycle signals
+  // (SIGTERM on Railway redeploys / teardown, SIGINT locally) shut the app down cleanly
+  // instead of a forced kill that shows up as a "Crashed" deployment.
+  const server = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 Server listening on http://0.0.0.0:${PORT} (PID: ${process.pid}, mode: ${isProduction ? 'production' : 'development'})`);
   });
+
+  // FIX (DEPLOY): graceful shutdown for Railway-style lifecycle management.
+  // Railway sends SIGTERM when a deployment is superseded or torn down; per the
+  // official "NodeJS SIGTERM handling" guidance the process must catch it, stop
+  // accepting new connections, close idle keep-alive sockets, and exit on its own.
+  let shuttingDown = false;
+  const gracefulShutdown = (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`[Server] ${signal} received — starting graceful shutdown...`);
+
+    // Safety net: if something still keeps the process alive, force the exit so the
+    // platform is never left hanging.
+    const forceExitTimer = setTimeout(() => {
+      console.error('[Server] Graceful shutdown timed out — forcing exit now.');
+      process.exit(1);
+    }, 10_000);
+    forceExitTimer.unref();
+
+    // Stop accepting new connections; drop idle keep-alive sockets immediately.
+    server.close(() => {
+      clearTimeout(forceExitTimer);
+      console.log('[Server] Server closed gracefully. Bye 👋');
+      process.exit(0);
+    });
+    // Node >= 18.2: closes idle keep-alive connections so close() completes fast.
+    (server as any).closeIdleConnections?.();
+
+    // In dev mode the Vite middleware (HMR websocket + file watchers) keeps the event
+    // loop alive — close it too so the process can actually terminate.
+    if (viteServer) {
+      void viteServer.close().catch(() => {});
+    }
+
+    // Drain grace: after 3s destroy ANY remaining connection (e.g. long translation
+    // streams or a half-open socket) so shutdown stays deterministic; the 10s timer
+    // above remains the absolute backstop.
+    const destroyTimer = setTimeout(() => {
+      console.log('[Server] Destroying remaining connections to finish shutdown.');
+      (server as any).closeAllConnections?.();
+    }, 3_000);
+    destroyTimer.unref();
+  };
+
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 }
 
 startServer();

@@ -42,6 +42,7 @@ interface VideoSubtitlePreviewProps {
   bilingualConfig?: BilingualConfig;
   setBilingualConfig?: (config: BilingualConfig) => void;
   onOpenBilingualModal?: () => void;
+  targetLanguage?: string; // FIX (B8): forwarded to /api/transcribe-audio (server already supports it)
 }
 
 export const VideoSubtitlePreview: React.FC<VideoSubtitlePreviewProps> = ({
@@ -53,6 +54,7 @@ export const VideoSubtitlePreview: React.FC<VideoSubtitlePreviewProps> = ({
   bilingualConfig,
   setBilingualConfig,
   onOpenBilingualModal,
+  targetLanguage,
 }) => {
 
   const t = TRANSLATIONS[uiLang];
@@ -81,6 +83,9 @@ export const VideoSubtitlePreview: React.FC<VideoSubtitlePreviewProps> = ({
   const [highAccuracyMode, setHighAccuracyMode] = useState<boolean>(false);
   const [extractProgressText, setExtractProgressText] = useState<string>('');
   const [extractProgressPercent, setExtractProgressPercent] = useState<number>(0);
+  // FIX (B8): the long extraction (dozens of API calls) had NO cancel button — once started,
+  // it ran to completion (or crash) no matter what. Now it is abortable via AbortController.
+  const extractAbortRef = useRef<AbortController | null>(null);
 
   // Subtitle Styling State
   const [styleConfig, setStyleConfig] = useState<SubtitleStyleConfig>({
@@ -164,11 +169,51 @@ export const VideoSubtitlePreview: React.FC<VideoSubtitlePreviewProps> = ({
   };
 
   // Extract Audio & Transcribe to SRT using AI with Memory-Optimized Sequential Chunks
+  // FIX (B8):
+  //  1. If the editor already has items, the user gets a REPLACE/MERGE/CANCEL choice instead of
+  //     a silent one-click wipe of existing (possibly translated) subtitles.
+  //  2. Very large videos trigger an explicit memory warning before the (still fully buffered)
+  //     decode begins — the "memory-optimized" label was misleading since the WHOLE file is
+  //     decoded to PCM before chunking.
+  //  3. targetLanguage is forwarded to the server so the destination-language choice is honored.
+  //  4. The operation is cancellable via the new Cancel button (AbortController).
   const handleExtractAudioAndTranscribe = async () => {
     if (!videoFile) {
       onShowToast(uiLang === 'en' ? 'Please upload a video file first.' : 'لطفاً ابتدا یک ویدئو بارگذاری کنید.', 'warning');
       return;
     }
+
+    // 1) Overwrite protection
+    if (items.length > 0) {
+      const hasTranslations = items.some((it) => it.translatedText && it.translatedText.trim());
+      const choice = hasTranslations
+        ? window.confirm(
+            uiLang === 'en'
+              ? 'The editor already contains (translated) subtitle lines.\n\nOK = REPLACE them with the newly extracted subtitles\nCancel = keep your current lines and stop'
+              : 'ویرایشگر در حال حاضر شامل سطرهای زیرنویس (ترجمه‌شده) است.\n\nتأیید = جایگزینی با زیرنویس‌های تازه استخراج‌شده\nانصراف = حفظ سطرهای فعلی و لغو عملیات'
+          )
+        : window.confirm(
+            uiLang === 'en'
+              ? `Extract subtitles and REPLACE the current ${items.length} line(s)?`
+              : `استخراج زیرنویس و جایگزینی ${items.length} سطر فعلی؟`
+          );
+      if (!choice) return;
+    }
+
+    // 2) Memory warning for big files (whole-file decode still costs ~video-size × 20 in RAM)
+    const LARGE_VIDEO_BYTES = 300 * 1024 * 1024; // 300MB
+    if (videoFile.size > LARGE_VIDEO_BYTES) {
+      const proceed = window.confirm(
+        uiLang === 'en'
+          ? `This video is large (${Math.round(videoFile.size / (1024 * 1024))} MB). Audio extraction decodes the full soundtrack in memory and may crash the browser tab on long movies.\n\nProceed anyway?`
+          : `حجم ویدئو بالاست (${Math.round(videoFile.size / (1024 * 1024))} مگابایت). استخراج صوت، کل باند صوتی را در حافظه رمزگشایی می‌کند و روی فیلم‌های بلند ممکن است تب مرورگر کرش کند.\n\nادامه می‌دهید؟`
+      );
+      if (!proceed) return;
+    }
+
+    const abortController = new AbortController();
+    extractAbortRef.current = abortController;
+    const wasCancelled = () => abortController.signal.aborted;
 
     setIsExtracting(true);
     setExtractProgressPercent(0);
@@ -191,6 +236,7 @@ export const VideoSubtitlePreview: React.FC<VideoSubtitlePreviewProps> = ({
         videoFile,
         60,
         async (chunk) => {
+          if (wasCancelled()) return;
           const startMin = Math.floor(chunk.startTimeSeconds / 60);
           const startSec = Math.floor(chunk.startTimeSeconds % 60);
           const endMin = Math.floor((chunk.startTimeSeconds + chunk.durationSeconds) / 60);
@@ -215,7 +261,11 @@ export const VideoSubtitlePreview: React.FC<VideoSubtitlePreviewProps> = ({
               audioBase64: chunk.base64Audio,
               mimeType: 'audio/wav',
               highAccuracyMode,
+              // FIX (B8): server-supported but previously never sent — the user's target
+              // language choice was silently ignored
+              targetLanguage: targetLanguage || undefined,
             }),
+            signal: abortController.signal,
           });
 
           if (!response.ok) {
@@ -236,6 +286,11 @@ export const VideoSubtitlePreview: React.FC<VideoSubtitlePreviewProps> = ({
         }
       );
 
+      if (wasCancelled()) {
+        onShowToast(uiLang === 'en' ? 'Subtitle extraction cancelled.' : 'استخراج زیرنویس لغو شد.', 'info');
+        return;
+      }
+
       // Re-index merged subtitle items with 1-based sequential IDs
       const finalItems = allItems.map((item, idx) => ({
         ...item,
@@ -253,12 +308,26 @@ export const VideoSubtitlePreview: React.FC<VideoSubtitlePreviewProps> = ({
         'success'
       );
     } catch (err: unknown) {
+      // FIX (B8): a user-initiated cancel is not an error
+      if ((err as any)?.name === 'AbortError') {
+        onShowToast(uiLang === 'en' ? 'Subtitle extraction cancelled.' : 'استخراج زیرنویس لغو شد.', 'info');
+        return;
+      }
       const msg = err instanceof Error ? err.message : 'Error extracting subtitles';
       console.error('Extraction error:', err);
       onShowToast(msg, 'error');
     } finally {
+      if (extractAbortRef.current?.signal.aborted || extractAbortRef.current) {
+        extractAbortRef.current = null;
+      }
       setIsExtracting(false);
     }
+  };
+
+  // FIX (B8): cancel button handler for the long-running extraction
+  const handleCancelExtraction = () => {
+    try { extractAbortRef.current?.abort(); } catch {}
+    setExtractProgressText(uiLang === 'en' ? 'Cancelling...' : 'در حال لغو...');
   };
 
   // Custom positioning class for overlay
@@ -547,6 +616,14 @@ export const VideoSubtitlePreview: React.FC<VideoSubtitlePreviewProps> = ({
                   <div className="w-full bg-purple-200 dark:bg-purple-900/60 h-2 rounded-full overflow-hidden">
                     <div className="bg-purple-600 dark:bg-purple-400 h-full transition-all duration-300 rounded-full" style={{ width: `${extractProgressPercent}%` }} />
                   </div>
+                  {/* FIX (B8): cancel button for the long-running multi-call extraction */}
+                  <button
+                    type="button"
+                    onClick={handleCancelExtraction}
+                    className="mt-2 w-full py-1.5 rounded-lg bg-rose-100 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300 text-[11px] font-bold border border-rose-300 dark:border-rose-900/60 hover:bg-rose-200 dark:hover:bg-rose-950 transition-colors"
+                  >
+                    {uiLang === 'en' ? 'Cancel extraction' : 'لغو استخراج'}
+                  </button>
                 </div>
               )}
             </div>

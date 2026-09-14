@@ -143,6 +143,7 @@ export interface SubtitleItem {
   originalText: string;
   translatedText: string;
   styleTags?: string; // ASS/SSA styling or header tags if any
+  cueId?: string;     // FIX (L9): WebVTT cue identifier preserved from the source file
   isEditing?: boolean;
   sourceModified?: boolean;
   gameKey?: string;

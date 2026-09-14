@@ -20,7 +20,8 @@ import {
   loadSessionFromDb, 
   saveSessionToDb, 
   debounceSaveSession, 
-  clearSessionInDb 
+  clearSessionInDb,
+  flushPendingSessionSaves
 } from './lib/sessionStorageDb';
 import { 
   parseSubtitleFile, 
@@ -28,6 +29,7 @@ import {
   detectEncodingAndDecode,
   fixRTLPunctuation,
   timestampToSeconds,
+  secondsToSRT,
   RTL_LANGUAGES
 } from './lib/subtitleParser';
 import { 
@@ -38,6 +40,7 @@ import {
   exportGameTXT,
   isCodeOnlyOrSkippable,
   appendHiddenRTLMarker,
+  stripHiddenRTLMarker,
   extractGameVariables
 } from './lib/gameLocalizationParser';
 
@@ -267,22 +270,44 @@ export default function App() {
   }, [isPaused]);
 
   // Toast Helper
+  // FIX (L4): dedupe previously compared message text only, so two DIFFERENT events with the
+  // same text (e.g. two consecutive batches failing with an identical provider message) were
+  // collapsed into one toast and the user lost the real severity. Dedupe is now limited to a
+  // 700ms window — rapid accidental duplicates are still suppressed, but distinct events stack.
+  const lastToastRef = useRef<{ message: string; type: string; ts: number }>({ message: '', type: '', ts: 0 });
   const showToast = (message: string, type: 'success' | 'error' | 'info' | 'warning' = 'info') => {
+    const now = Date.now();
+    const isRapidDuplicate = lastToastRef.current.message === message && lastToastRef.current.type === type && (now - lastToastRef.current.ts) < 700;
+    lastToastRef.current = { message, type, ts: now };
+    if (isRapidDuplicate) return;
+
     setToasts((prev) => {
-      if (prev.some((t) => t.message === message && t.type === type)) {
-        return prev;
-      }
       const id = Date.now().toString() + '_' + Math.random().toString(36).substring(2, 6);
       return [...prev, { id, message, type }];
     });
     setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => !(t.message === message && t.type === type)));
+      setToasts((prev) => prev.filter((t) => t.message !== message || t.type !== type));
     }, 4000);
   };
 
   const handleDismissToast = (id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
+
+  // FIX (B18): flush every pending per-mode autosave when the tab hides/closes — a quick mode
+  // switch + instant browser close can no longer swallow the last 1.2s of edits.
+  useEffect(() => {
+    const onPageHide = () => flushPendingSessionSaves();
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') flushPendingSessionSaves();
+    };
+    window.addEventListener('pagehide', onPageHide);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      window.removeEventListener('pagehide', onPageHide);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, []);
 
   // Helper to apply isolated mode session to local state
   const applySessionState = (s: ModeSessionState) => {
@@ -345,6 +370,11 @@ export default function App() {
     // 2. Stop ongoing translation if user switches mode
     if (isTranslating) {
       cancelTranslationRef.current = true;
+      // FIX (Cancellation): also abort the in-flight request so the server-side upstream call stops too
+      if (activeAbortControllerRef.current) {
+        try { activeAbortControllerRef.current.abort(); } catch {}
+        activeAbortControllerRef.current = null;
+      }
       setIsTranslating(false);
       setIsPaused(false);
     }
@@ -505,6 +535,11 @@ export default function App() {
         setDetectedEncoding(forcedEncoding && forcedEncoding !== 'auto' ? forcedEncoding : 'UTF-8');
 
         showToast(`${t.newFileLoaded} (${unifiedItems.length} ${t.linesCount})`, 'success');
+        // FIX (B13/B16): surface parser warnings (orphan SRT blocks, salvaged ASS events, ...)
+        const gameWarnings = (parsedGame as any).warnings as string[] | undefined;
+        if (gameWarnings && gameWarnings.length > 0) {
+          gameWarnings.forEach((w) => showToast(w, 'warning'));
+        }
         detectLanguageOnLoad(unifiedItems);
       } catch (err: unknown) {
         showToast(err instanceof Error ? err.message : 'Error parsing game localization file', 'error');
@@ -520,8 +555,15 @@ export default function App() {
         setSourceFormat(parsed.format);
         setTargetFormat(parsed.format);
         setRawHeader(parsed.rawHeader);
+        // FIX (L8): remember the MicroDVD FPS detected in the source header for export
+        subFpsRef.current = (parsed as any).subFps || 25;
 
         showToast(`${t.newFileLoaded} (${parsed.items.length} ${t.linesCount})`, 'success');
+        // FIX (B13/B16): surface parser warnings (orphan blocks, salvaged ASS events, ...)
+        const parseWarnings = (parsed as any).warnings as string[] | undefined;
+        if (parseWarnings && parseWarnings.length > 0) {
+          parseWarnings.forEach((w) => showToast(w, 'warning'));
+        }
         detectLanguageOnLoad(parsed.items);
       } catch (err: unknown) {
         showToast(err instanceof Error ? err.message : t.fileParseError, 'error');
@@ -529,9 +571,22 @@ export default function App() {
     }
   };
 
+  // FIX (L8): FPS of the currently loaded MicroDVD file (default 25)
+  const subFpsRef = useRef<number>(25);
+
+  // FIX (B7): switching the encoding used to silently RE-PARSE the file and wipe every
+  // translation. Now translations survive: after re-parse, previously translated text is
+  // re-attached by logical identity (game key for game files, start time for subtitles),
+  // and the pre-reload state is flushed to IndexedDB first as an extra safety net.
   const handleEncodingChange = (newEncoding: string) => {
     setSelectedEncoding(newEncoding);
     if (lastUploadedBufferRef.current) {
+      // Safety net 1: persist the CURRENT session (with translations) before re-parsing
+      try { flushPendingSessionSaves(); } catch {}
+
+      const previousItems = items;
+      const hadTranslations = previousItems.some((it) => it.translatedText && it.translatedText.trim());
+
       processBufferData(
         lastUploadedBufferRef.current.buffer,
         lastUploadedBufferRef.current.name,
@@ -539,6 +594,48 @@ export default function App() {
         mode,
         newEncoding
       );
+
+      // Safety net 2: re-attach translations onto the freshly parsed items.
+      // processBufferData updates state asynchronously via setItems — we hook into the same
+      // updater flow by scheduling our merge AFTER its state update with a functional update.
+      if (hadTranslations) {
+        setTimeout(() => {
+          setItems((freshItems) => {
+            if (!freshItems.length || !previousItems.length) return freshItems;
+            const isGameCtx = mode === 'game' || ['csv', 'json', 'xlsx', 'txt'].includes(String(lastUploadedBufferRef.current?.name || '').split('.').pop() || '');
+            const translationByKey = new Map<string, string>();
+            previousItems.forEach((it) => {
+              if (!it.translatedText || !it.translatedText.trim()) return;
+              const identity = isGameCtx
+                ? (it.gameKey || it.context || it.originalText)
+                : `${Math.round((it.startSeconds || 0) * 10)}|${it.originalText.slice(0, 40)}`;
+              if (!translationByKey.has(identity)) {
+                translationByKey.set(identity, it.translatedText);
+              }
+            });
+            let restored = 0;
+            const merged = freshItems.map((it) => {
+              if (it.translatedText && it.translatedText.trim()) return it; // already has a value
+              const identity = isGameCtx
+                ? (it.gameKey || it.context || it.originalText)
+                : `${Math.round((it.startSeconds || 0) * 10)}|${it.originalText.slice(0, 40)}`;
+              const saved = translationByKey.get(identity);
+              if (saved) { restored++; return { ...it, translatedText: saved }; }
+              return it;
+            });
+            if (restored > 0) {
+              showToast(
+                uiLang === 'en'
+                  ? `Encoding switched — ${restored} existing translation(s) were preserved.`
+                  : `رمزگذاری تغییر کرد — ${restored} ترجمهٔ قبلی حفظ شد.`,
+                'success'
+              );
+            }
+            return merged;
+          });
+        }, 50);
+      }
+
       showToast(
         uiLang === 'en'
           ? `File reloaded using encoding: ${newEncoding}`
@@ -579,9 +676,27 @@ export default function App() {
     }
   };
 
+  // FIX (L9): language detection used to fire a paid Gemini request on EVERY file load.
+  // Results are now cached per (file name + size + sample hash) so re-loading or switching
+  // between the same files no longer spends quota, and the detection request is skipped
+  // entirely when neither a user key nor a server key is available.
   const detectLanguageOnLoad = async (loadedItems: SubtitleItem[]) => {
     if (loadedItems.length === 0) return;
     const sampleText = loadedItems.slice(0, 5).map((i) => i.originalText).join(' ');
+    if (!sampleText.trim()) return;
+
+    // Skip when there is no key available at all (the server would reject it anyway)
+    const userKeys = getApiKeyArrayForHeader();
+    if (userKeys.length === 0 && !serverHasKey) return;
+
+    const cacheKey = `sgl_lang_detect_${fileName}_${fileSize}_${sampleText.length}`;
+    try {
+      const cached = localStorage.getItem(cacheKey);
+      if (cached) {
+        setDetectedSourceLang(cached);
+        return;
+      }
+    } catch {}
 
     try {
       const res = await fetch('/api/detect-language', {
@@ -595,6 +710,7 @@ export default function App() {
         const detectedName = data.languageFa || data.language || data.detectedLanguage;
         if (detectedName) {
           setDetectedSourceLang(detectedName);
+          try { localStorage.setItem(cacheKey, detectedName); } catch {}
         }
       }
     } catch {
@@ -664,10 +780,18 @@ export default function App() {
 
   // AI Quality Audit & Verification Pass
   const [isVerifyingQuality, setIsVerifyingQuality] = useState(false);
+  // FIX (B2): quality-audit runs get the same job-isolation treatment as translation runs
+  const verifyRunIdRef = useRef<string>('');
 
   const handleVerifyQuality = async () => {
     if (items.length === 0) return;
+    const verifyRunId = 'verify_' + Date.now().toString(36);
+    verifyRunIdRef.current = verifyRunId;
+    const isVerifyDead = () => verifyRunIdRef.current !== verifyRunId || (activeAbortControllerRef.current?.signal.aborted ?? false);
+
     setIsVerifyingQuality(true);
+    const verifyAbortController = new AbortController();
+    activeAbortControllerRef.current = verifyAbortController;
     try {
       const res = await fetch('/api/verify-translation', {
         method: 'POST',
@@ -686,7 +810,12 @@ export default function App() {
           provider: activeAiProvider,
           customProvider: activeAiProvider === 'custom' ? customProviderConfig : undefined,
         }),
+        // FIX (B2): a mode switch (setMode aborts activeAbortControllerRef) now also aborts the
+        // quality audit instead of letting it finish and overwrite the other workspace
+        signal: verifyAbortController.signal,
       });
+
+      if (isVerifyDead()) return;
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -694,12 +823,17 @@ export default function App() {
       }
 
       const data = await res.json();
+      if (isVerifyDead()) return;
+
       const reviewedItems = data.reviewedItems || data.verifiedTranslations;
       if (reviewedItems && Array.isArray(reviewedItems)) {
         let refinedCount = 0;
         const isRTL = RTL_LANGUAGES.includes(targetLanguage);
 
         setItems((prev) => {
+          // FIX (B2): never apply audit results after cancel/mode-switch — the response would
+          // otherwise be written onto a DIFFERENT workspace's rows
+          if (isVerifyDead() || cancelTranslationRef.current) return prev;
           const copy = [...prev];
           reviewedItems.forEach((vt: { id: number; translatedText?: string; text?: string }) => {
             const idx = copy.findIndex((i) => i.id === vt.id);
@@ -721,9 +855,16 @@ export default function App() {
         );
       }
     } catch (err: unknown) {
+      // FIX (B2): an abort caused by cancel/mode-switch is not an error
+      if ((err as any)?.name === 'AbortError' || isVerifyDead()) return;
       showToast(err instanceof Error ? err.message : 'Error auditing translation quality', 'error');
     } finally {
-      setIsVerifyingQuality(false);
+      if (activeAbortControllerRef.current === verifyAbortController) {
+        activeAbortControllerRef.current = null;
+      }
+      if (verifyRunIdRef.current === verifyRunId) {
+        setIsVerifyingQuality(false);
+      }
     }
   };
 
@@ -732,16 +873,19 @@ export default function App() {
     setItems((prev) => {
       const nextId = prev.length > 0 ? Math.max(...prev.map((i) => i.id)) + 1 : 1;
       const lastItem = prev[prev.length - 1];
-      const newStart = lastItem ? lastItem.endTime : '00:00:00,000';
-      const newEnd = lastItem ? lastItem.endTime : '00:00:05,000';
+      // FIX (L1): the two time representations used to disagree — startTime/endTime were both
+      // set to the previous row's END time (zero-duration display) while startSeconds/endSeconds
+      // were 5s apart. Both displays now describe the SAME 5-second slot.
+      const newStartSec = lastItem ? lastItem.endSeconds : 0;
+      const newEndSec = lastItem ? lastItem.endSeconds + 5 : 5;
       return [
         ...prev,
         {
           id: nextId,
-          startTime: newStart,
-          endTime: newEnd,
-          startSeconds: lastItem ? lastItem.endSeconds : 0,
-          endSeconds: lastItem ? lastItem.endSeconds + 5 : 5,
+          startTime: secondsToSRT(newStartSec),
+          endTime: secondsToSRT(newEndSec),
+          startSeconds: newStartSec,
+          endSeconds: newEndSec,
           originalText: '',
           translatedText: '',
           gameKey: mode === 'game' ? `KEY_${nextId}` : undefined,
@@ -767,7 +911,13 @@ export default function App() {
   };
 
   // Live Real-Time Streaming Translation Handler
-  const translateWithLiveStream = async () => {
+  // FIX (Cancellation): jobId isolation + AbortController — previously this path had NO jobId check
+  // and NO fetch signal, so cancelling could leave a zombie loop that resumed when a new job reset
+  // the global cancel flag, and the in-flight stream could not be aborted at all.
+  const translateWithLiveStream = async (currentJobId: string) => {
+    // A batch/iteration may only continue while the cancel flag is false AND this job is still the active one
+    const isJobDead = () => cancelTranslationRef.current || activeJobIdRef.current !== currentJobId;
+
     const isRTL = RTL_LANGUAGES.includes(targetLanguage);
     const STREAM_CHUNK_SIZE = Math.min(batchSize || 35, 30);
     const totalCount = items.length;
@@ -778,14 +928,14 @@ export default function App() {
     setTranslatedCount(0);
 
     for (let b = 0; b < totalBatchesCount; b++) {
-      if (cancelTranslationRef.current) break;
+      if (isJobDead()) break;
 
       while (isPausedRef.current) {
-        if (cancelTranslationRef.current) break;
+        if (isJobDead()) break;
         await new Promise((resolve) => setTimeout(resolve, 500));
       }
 
-      if (cancelTranslationRef.current) break;
+      if (isJobDead()) break;
 
       setCurrentBatch(b + 1);
       const startIndex = b * STREAM_CHUNK_SIZE;
@@ -805,6 +955,10 @@ export default function App() {
 
       if (autoFilled.length > 0) {
         setItems((prevItems) => {
+          // FIX (B2): a zombie/stale stream loop must never write into the CURRENT workspace —
+          // after a mode switch both lists share ids starting at 1, so unguarded writes landed
+          // translations of the OLD workspace onto the NEW workspace's rows.
+          if (cancelTranslationRef.current || activeJobIdRef.current !== currentJobId) return prevItems;
           const updated = [...prevItems];
           autoFilled.forEach((af) => {
             const idx = updated.findIndex((i) => i.id === af.id);
@@ -820,6 +974,10 @@ export default function App() {
         setTranslatedCount((prev) => prev + batchSlice.length);
         continue;
       }
+
+      const abortController = new AbortController();
+      activeAbortControllerRef.current = abortController;
+      let clientGone = false;
 
       try {
         const response = await fetch('/api/translate-stream', {
@@ -839,6 +997,9 @@ export default function App() {
             mode,
             model: selectedModel,
           }),
+          // FIX (Cancellation): the stream fetch is now abortable — the Cancel button (which aborts
+          // activeAbortControllerRef) kills this request instantly, instead of waiting for the next chunk
+          signal: abortController.signal,
         });
 
         if (!response.ok || !response.body) {
@@ -850,13 +1011,25 @@ export default function App() {
         let buffer = '';
 
         while (true) {
-          if (cancelTranslationRef.current) {
-            reader.cancel();
+          if (isJobDead()) {
+            clientGone = true;
+            try { await reader.cancel(); } catch {}
             break;
           }
 
           const { done, value } = await reader.read();
           if (done) break;
+
+          // FIX (Cancellation): pause now works DURING streaming (backpressure) — previously the
+          // pause flag was never checked inside the read loop, so pause did nothing until the batch ended
+          while (isPausedRef.current && !isJobDead()) {
+            await new Promise((r) => setTimeout(r, 300));
+          }
+          if (isJobDead()) {
+            clientGone = true;
+            try { await reader.cancel(); } catch {}
+            break;
+          }
 
           buffer += decoder.decode(value, { stream: true });
           const events = buffer.split('\n\n');
@@ -883,6 +1056,11 @@ export default function App() {
 
               if (eventType === 'line_translated' && parsed.id && parsed.text !== undefined) {
                 setItems((prevItems) => {
+                  // FIX (B2): the apply itself is guarded NOW (not only at the next read) —
+                  // between reading a chunk and React running this updater, the user may have
+                  // cancelled or switched mode; stale translations of the old workspace must
+                  // never land on the new workspace's rows (ids collide starting at 1).
+                  if (cancelTranslationRef.current || activeJobIdRef.current !== currentJobId) return prevItems;
                   const updated = [...prevItems];
                   const targetIndex = updated.findIndex((i) => i.id === parsed.id);
                   if (targetIndex !== -1) {
@@ -914,18 +1092,32 @@ export default function App() {
           }
         }
       } catch (streamErr: any) {
-        console.error('Live streaming network/parse error:', streamErr);
-        showToast(streamErr?.message || 'Error in live streaming translation', 'error');
+        // FIX (Cancellation): an abort from the Cancel button is not an error — exit quietly.
+        // Previously an abort/network error was toasted and the loop CONTINUED to the next batch.
+        if (streamErr?.name === 'AbortError' || isJobDead()) {
+          clientGone = true;
+        } else {
+          console.error('Live streaming network/parse error:', streamErr);
+          showToast(streamErr?.message || 'Error in live streaming translation', 'error');
+        }
+      } finally {
+        // FIX: release the abort controller slot so a fresh job registers its own
+        if (activeAbortControllerRef.current === abortController) {
+          activeAbortControllerRef.current = null;
+        }
       }
 
+      // FIX (Zombie prevention): if this job was cancelled/superseded, never start the next batch
+      if (clientGone || isJobDead()) break;
+
       // Small throttle between stream blocks with rate-limit pacing support
-      if (b < totalBatchesCount - 1 && !cancelTranslationRef.current) {
+      if (b < totalBatchesCount - 1 && !isJobDead()) {
         if (rateLimitPacing) {
           const delaySeconds = 3;
           for (let s = delaySeconds; s > 0; s--) {
-            if (cancelTranslationRef.current) break;
+            if (isJobDead()) break;
             while (isPausedRef.current) {
-              if (cancelTranslationRef.current) break;
+              if (isJobDead()) break;
               await new Promise((r) => setTimeout(r, 500));
             }
             setPacingRemainingSec(s);
@@ -938,12 +1130,16 @@ export default function App() {
       }
     }
 
-    setPacingRemainingSec(null);
-    setIsTranslating(false);
-    isTranslatingRef.current = false;
+    // FIX (Race safety): only the ACTIVE job may touch the shared UI state. If a new job already
+    // took over (cancel + quick restart), this stale loop must exit without resetting its state.
+    if (activeJobIdRef.current === currentJobId) {
+      setPacingRemainingSec(null);
+      setIsTranslating(false);
+      isTranslatingRef.current = false;
 
-    if (!cancelTranslationRef.current) {
-      showToast(t.translationFinished, 'success');
+      if (!cancelTranslationRef.current) {
+        showToast(t.translationFinished, 'success');
+      }
     }
   };
 
@@ -1007,7 +1203,7 @@ export default function App() {
           'info'
         );
       } else {
-        await translateWithLiveStream();
+        await translateWithLiveStream(currentJobId);
         return;
       }
     }
@@ -1213,12 +1409,16 @@ export default function App() {
       }
     }
 
-    setPacingRemainingSec(null);
-    setIsTranslating(false);
-    isTranslatingRef.current = false;
+    // FIX (Race safety): only the ACTIVE job may reset the shared state — a stale cancelled loop
+    // whose tail runs after a new job started must not kill the new job's UI/locks.
+    if (activeJobIdRef.current === currentJobId) {
+      setPacingRemainingSec(null);
+      setIsTranslating(false);
+      isTranslatingRef.current = false;
 
-    if (!cancelTranslationRef.current) {
-      showToast(t.translationFinished, 'success');
+      if (!cancelTranslationRef.current) {
+        showToast(t.translationFinished, 'success');
+      }
     }
   };
 
@@ -1305,8 +1505,25 @@ export default function App() {
   };
 
   // Export File Download (Handles Cinema & Game Formats)
+  // FIX (B4): XLSX export now receives the original structure — extra columns (speaker,
+  // category, notes, engine ids…) and the original sheet name survive the round-trip.
+  // FIX (B12): TXT export now receives the original structure — comments and blank lines are
+  // rebuilt exactly instead of being dropped by the fallback path.
+  // FIX (B17): the appendRTLMarkers toggle is now actually honored by ALL game exports AND the
+  // cinema export; when OFF, markers previously embedded in the text are stripped on the way out.
+  // FIX (B9): exporting is no longer locked behind 100% completion — with an unfinished file the
+  // user gets an informed confirm() dialog instead of a permanently disabled button.
   const handleExport = async () => {
     if (items.length === 0) return;
+
+    const untranslatedCount = totalItemsCount - translatedItemsCount;
+    if (untranslatedCount > 0 && !isTranslating) {
+      const confirmMsg = uiLang === 'en'
+        ? `${untranslatedCount} row(s) have no translation yet.\n\nOK = download now (untranslated rows will fall back to the original text)\nCancel = go back and continue translating`
+        : `${untranslatedCount} سطر هنوز ترجمه ندارد.\n\nتأیید = همین حالا دانلود شود (سطرهای بدون ترجمه با متن اصلی خروجی می‌گیرند)\nانصراف = بازگشت و ادامهٔ ترجمه`;
+      const proceed = window.confirm(confirmMsg);
+      if (!proceed) return;
+    }
 
     const isRTL = RTL_LANGUAGES.includes(targetLanguage);
     const nameWithoutExt = fileName ? fileName.substring(0, fileName.lastIndexOf('.')) || fileName : 'SubGameLab_Translation';
@@ -1324,13 +1541,13 @@ export default function App() {
 
       let blob: Blob;
       if (targetFormat === 'csv') {
-        blob = exportGameCSV(gameItems, gameMapping, gameOriginalStructure);
+        blob = exportGameCSV(gameItems, gameMapping, gameOriginalStructure, appendRTLMarkers);
       } else if (targetFormat === 'json') {
-        blob = exportGameJSON(gameItems, gameOriginalStructure);
+        blob = exportGameJSON(gameItems, gameOriginalStructure, appendRTLMarkers);
       } else if (targetFormat === 'xlsx') {
-        blob = await exportGameXLSX(gameItems, gameMapping);
+        blob = await exportGameXLSX(gameItems, gameMapping, gameOriginalStructure, appendRTLMarkers);
       } else {
-        blob = exportGameTXT(gameItems);
+        blob = exportGameTXT(gameItems, gameOriginalStructure, appendRTLMarkers);
       }
 
       const url = URL.createObjectURL(blob);
@@ -1362,7 +1579,9 @@ export default function App() {
         items,
         targetFormat as SubtitleFormat,
         rawHeader,
-        isRTL
+        isRTL,
+        appendRTLMarkers, // FIX (B17): the cinema UI toggle now reaches the exporter too
+        subFpsRef.current // FIX (L8): keep the MicroDVD frame rate of the source file
       );
     }
 
@@ -1565,6 +1784,7 @@ export default function App() {
             bilingualConfig={bilingualConfig}
             setBilingualConfig={handleUpdateBilingualConfig}
             onOpenBilingualModal={() => setIsBilingualModalOpen(true)}
+            targetLanguage={targetLanguage}
           />
         )}
 
@@ -1680,7 +1900,7 @@ export default function App() {
       />
 
       {/* Toast Container */}
-      <ToastContainer toasts={toasts} onDismiss={handleDismissToast} />
+      <ToastContainer toasts={toasts} onDismiss={handleDismissToast} uiLang={uiLang} />
 
     </div>
   );

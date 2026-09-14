@@ -68,6 +68,8 @@ export const Header: React.FC<HeaderProps> = ({
   isTranslating = false,
   isFullyTranslated = false,
   completionPercentage = 0,
+  translatedItemsCount = 0,
+  totalItemsCount = 0,
 }) => {
   const t = TRANSLATIONS[uiLang];
 
@@ -283,19 +285,23 @@ export const Header: React.FC<HeaderProps> = ({
           {hasSubtitles && (
             <button
               onClick={onExport}
-              disabled={isTranslating || !isFullyTranslated}
+              // FIX (B9): the download button is no longer locked until 100% translation.
+              // It is only disabled DURING an active translation run — a partially translated
+              // file can always be exported (App shows an informed confirm dialog and the
+              // exporters already fall back to the original text for untranslated rows).
+              disabled={isTranslating}
               className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl transition-all shrink-0 ${
                 isTranslating
                   ? 'bg-indigo-100 dark:bg-indigo-950/80 text-indigo-700 dark:text-indigo-300 border border-indigo-300 dark:border-indigo-700/60 cursor-wait'
                   : isFullyTranslated
                   ? 'text-white bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 border border-emerald-500/30 shadow-md active:scale-95'
-                  : 'bg-slate-100 dark:bg-slate-800/80 text-slate-400 border border-slate-200 dark:border-slate-700 cursor-not-allowed opacity-75'
+                  : 'text-white bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 border border-amber-500/30 shadow-md active:scale-95'
               }`}
               title={
                 isTranslating
                   ? `${t.processing} (${completionPercentage}%)...`
                   : !isFullyTranslated
-                  ? `${t.downloadDisabled} (${completionPercentage}%)`
+                  ? `${t.downloadPartial} (${translatedItemsCount}/${totalItemsCount})`
                   : t.downloadSubtitle
               }
             >
@@ -306,8 +312,8 @@ export const Header: React.FC<HeaderProps> = ({
                 </>
               ) : !isFullyTranslated ? (
                 <>
-                  <Lock className="w-3.5 h-3.5 text-amber-500 dark:text-amber-400" />
-                  <span>{completionPercentage}%</span>
+                  <Download className="w-3.5 h-3.5 text-white" />
+                  <span>{translatedItemsCount}/{totalItemsCount}</span>
                 </>
               ) : (
                 <>
